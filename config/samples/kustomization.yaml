@@ -1,0 +1,5 @@
+## Append samples of your project ##
+resources:
+- kflared_v1alpha1_cloudflareprovider.yaml
+- kflared_v1alpha1_cloudflaretunnelbinding.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples
