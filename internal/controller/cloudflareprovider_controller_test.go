@@ -18,70 +18,53 @@ package controller
 
 import (
 	"context"
+	"testing"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	kflaredv1alpha1 "github.com/kode-blox/kflared/api/v1alpha1"
 )
 
-var _ = Describe("CloudflareProvider Controller", func() {
-	Context("When reconciling a resource", func() {
-		const (
-			resourceName      = "test-resource"
-			resourceNamespace = "default"
-		)
+func TestProviderReconcileValidatesCredentials(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := kflaredv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	provider := readyProvider()
+	provider.Finalizers = nil
+	provider.Status = kflaredv1alpha1.CloudflareProviderStatus{}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-api-token", Namespace: defaultSystemNamespace},
+		Data:       map[string][]byte{"api-token": []byte("secret-token")},
+	}
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(provider).WithObjects(provider, secret).Build()
+	reconciler := &CloudflareProviderReconciler{Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: &fakeCloudflareClient{}}}
+	request := ctrl.Request{NamespacedName: types.NamespacedName{Name: provider.Name}}
 
-		ctx := context.Background()
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("add finalizer: %v", err)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("validate provider: %v", err)
+	}
 
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: resourceNamespace,
-		}
-		cloudflareprovider := &kflaredv1alpha1.CloudflareProvider{}
-
-		BeforeEach(func() {
-			By("creating the custom resource for the Kind CloudflareProvider")
-			err := k8sClient.Get(ctx, typeNamespacedName, cloudflareprovider)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &kflaredv1alpha1.CloudflareProvider{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: resourceNamespace,
-					},
-					// TODO(user): Specify other spec details if needed.
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-			}
-		})
-
-		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &kflaredv1alpha1.CloudflareProvider{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Cleanup the specific resource instance CloudflareProvider")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &CloudflareProviderReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
-		})
-	})
-})
+	actual := &kflaredv1alpha1.CloudflareProvider{}
+	if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
+		t.Fatal(err)
+	}
+	if !conditionTrue(actual.Status.Conditions, actual.Generation, kflaredv1alpha1.ProviderConditionAccepted) {
+		t.Fatalf("provider Accepted condition is not true: %#v", actual.Status.Conditions)
+	}
+	if !conditionTrue(actual.Status.Conditions, actual.Generation, kflaredv1alpha1.ProviderConditionCredentialsValid) {
+		t.Fatalf("provider CredentialsValid condition is not true: %#v", actual.Status.Conditions)
+	}
+}

@@ -20,6 +20,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -48,6 +49,9 @@ var (
 )
 
 func TestControllers(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("controller-runtime envtest cannot terminate control-plane processes on Windows; CI runs this suite on Linux")
+	}
 	RegisterFailHandler(Fail)
 
 	RunSpecs(t, "Controller Suite")

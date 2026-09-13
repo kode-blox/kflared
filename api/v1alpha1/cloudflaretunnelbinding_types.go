@@ -19,72 +19,120 @@ package v1alpha1
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
+const (
+	BindingConditionAccepted           = "Accepted"
+	BindingConditionProgrammed         = "Programmed"
+	BindingConditionConnectorReady     = "ConnectorReady"
+	BindingConditionDNSAutomationReady = "DNSAutomationReady"
+	BindingConditionReady              = "Ready"
 
-// CloudflareTunnelBindingSpec defines the desired state of CloudflareTunnelBinding
-type CloudflareTunnelBindingSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
+	DeletionPolicyDelete DeletionPolicy = "Delete"
+	DeletionPolicyRetain DeletionPolicy = "Retain"
+)
 
-	// foo is an example field of CloudflareTunnelBinding. Edit cloudflaretunnelbinding_types.go to remove/update
-	// +optional
-	Foo *string `json:"foo,omitempty"`
+// DeletionPolicy controls whether the remote Cloudflare Tunnel is removed with the binding.
+// +kubebuilder:validation:Enum=Delete;Retain
+type DeletionPolicy string
+
+// LocalReference identifies a resource in the binding namespace.
+type LocalReference struct {
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
 }
 
-// CloudflareTunnelBindingStatus defines the observed state of CloudflareTunnelBinding.
+// GatewayReference selects one listener on a Gateway in the binding namespace.
+type GatewayReference struct {
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+	// +kubebuilder:validation:MinLength=1
+	SectionName string `json:"sectionName"`
+}
+
+// GatewayServiceReference identifies the internal Traefik Service and port.
+type GatewayServiceReference struct {
+	// +kubebuilder:validation:MinLength=1
+	Name string             `json:"name"`
+	Port intstr.IntOrString `json:"port"`
+}
+
+// CloudflareTunnelBindingSpec defines the desired tunnel integration.
+type CloudflareTunnelBindingSpec struct {
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="providerRef is immutable"
+	ProviderRef LocalReference `json:"providerRef"`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="gatewayRef is immutable"
+	GatewayRef        GatewayReference        `json:"gatewayRef"`
+	GatewayServiceRef GatewayServiceReference `json:"gatewayServiceRef"`
+
+	// connectorReplicas controls the number of official cloudflared connectors.
+	// +kubebuilder:default=2
+	// +kubebuilder:validation:Minimum=2
+	ConnectorReplicas int32 `json:"connectorReplicas,omitempty"`
+
+	// deletionPolicy controls remote tunnel deletion. Kubernetes connector resources
+	// and managed DNSEndpoints are always removed.
+	// +kubebuilder:default=Delete
+	DeletionPolicy DeletionPolicy `json:"deletionPolicy,omitempty"`
+}
+
+// DNSRecord describes an exact DNS record required for a published hostname.
+type DNSRecord struct {
+	Hostname string `json:"hostname"`
+	// +kubebuilder:validation:Enum=CNAME
+	Type   string `json:"type"`
+	Target string `json:"target"`
+}
+
+// ConnectorResourceNames records the generated resources without exposing credentials.
+type ConnectorResourceNames struct {
+	Deployment          string `json:"deployment,omitempty"`
+	PodDisruptionBudget string `json:"podDisruptionBudget,omitempty"`
+	Secret              string `json:"secret,omitempty"`
+	DNSEndpoint         string `json:"dnsEndpoint,omitempty"`
+}
+
+// CloudflareTunnelBindingStatus defines the observed binding state.
 type CloudflareTunnelBindingStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
-	// conditions represent the current state of the CloudflareTunnelBinding resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	ObservedGeneration int64  `json:"observedGeneration,omitempty"`
+	TunnelID           string `json:"tunnelID,omitempty"`
+	TunnelName         string `json:"tunnelName,omitempty"`
+	TunnelCNAME        string `json:"tunnelCNAME,omitempty"`
+	// +listType=set
+	PublishedHostnames []string `json:"publishedHostnames,omitempty"`
+	// +listType=map
+	// +listMapKey=hostname
+	DNSRecords []DNSRecord            `json:"dnsRecords,omitempty"`
+	Resources  ConnectorResourceNames `json:"resources,omitempty"`
 	// +listType=map
 	// +listMapKey=type
-	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:resource:scope=Namespaced,shortName=cftb
+// +kubebuilder:printcolumn:name="Gateway",type=string,JSONPath=".spec.gatewayRef.name"
+// +kubebuilder:printcolumn:name="Tunnel",type=string,JSONPath=".status.tunnelID"
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=".status.conditions[?(@.type=='Ready')].status"
 
-// CloudflareTunnelBinding is the Schema for the cloudflaretunnelbindings API
+// CloudflareTunnelBinding is the Schema for the cloudflaretunnelbindings API.
 type CloudflareTunnelBinding struct {
-	metav1.TypeMeta `json:",inline"`
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	// metadata is a standard object metadata
-	// +optional
-	metav1.ObjectMeta `json:"metadata,omitzero"`
-
-	// spec defines the desired state of CloudflareTunnelBinding
-	// +required
 	Spec CloudflareTunnelBindingSpec `json:"spec"`
-
-	// status defines the observed state of CloudflareTunnelBinding
 	// +optional
-	Status CloudflareTunnelBindingStatus `json:"status,omitzero"`
+	Status CloudflareTunnelBindingStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// CloudflareTunnelBindingList contains a list of CloudflareTunnelBinding
+// CloudflareTunnelBindingList contains a list of CloudflareTunnelBinding.
 type CloudflareTunnelBindingList struct {
 	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitzero"`
+	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []CloudflareTunnelBinding `json:"items"`
 }
 

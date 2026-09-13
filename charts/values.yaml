@@ -1,0 +1,91 @@
+# Default values for KFlared.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/kode-blox/kflared
+  pullPolicy: IfNotPresent
+  tag: ""
+
+kubernetesComponent: controller-manager
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""
+
+rbac:
+  create: true
+  helperRoles:
+    enabled: false
+
+leaderElection:
+  enabled: true
+
+metrics:
+  enabled: true
+  secure: true
+  port: 8443
+  service:
+    annotations: {}
+
+serviceMonitor:
+  enabled: false
+  labels: {}
+  interval: 30s
+  scrapeTimeout: 10s
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 128Mi
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: health
+  initialDelaySeconds: 15
+  periodSeconds: 20
+
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: health
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+terminationGracePeriodSeconds: 10
+
+extraArgs: []
+extraEnv: []
+volumes: []
+volumeMounts: []
+
+priorityClassName: ""
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []

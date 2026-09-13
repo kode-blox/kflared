@@ -1,0 +1,56 @@
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kflared.fullname" . }}-manager
+  labels:
+    {{- include "kflared.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  - apiGroups: [""]
+    resources: ["namespaces", "services"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["kflared.kodeblox.com"]
+    resources: ["cloudflareproviders", "cloudflaretunnelbindings"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["kflared.kodeblox.com"]
+    resources: ["cloudflareproviders/finalizers", "cloudflaretunnelbindings/finalizers"]
+    verbs: ["update"]
+  - apiGroups: ["kflared.kodeblox.com"]
+    resources: ["cloudflareproviders/status", "cloudflaretunnelbindings/status"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: ["externaldns.k8s.io"]
+    resources: ["dnsendpoints"]
+    verbs: ["create", "delete", "get", "patch", "update"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gatewayclasses", "gateways", "httproutes", "referencegrants"]
+    verbs: ["get", "list", "watch"]
+{{- if and .Values.metrics.enabled .Values.metrics.secure }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kflared.fullname" . }}-metrics-auth
+  labels:
+    {{- include "kflared.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["subjectaccessreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kflared.fullname" . }}-metrics-reader
+  labels:
+    {{- include "kflared.labels" . | nindent 4 }}
+rules:
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"]
+{{- end }}
+{{- end }}

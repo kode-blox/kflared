@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "replicaCount",
+    "image",
+    "kubernetesComponent",
+    "serviceAccount",
+    "rbac",
+    "leaderElection",
+    "metrics",
+    "serviceMonitor"
+  ],
+  "properties": {
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "image": {
+      "type": "object",
+      "required": ["repository", "pullPolicy", "tag"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]},
+        "tag": {"type": "string"}
+      }
+    },
+    "kubernetesComponent": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 63,
+      "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+    },
+    "serviceAccount": {
+      "type": "object",
+      "required": ["create", "automount", "annotations", "name"],
+      "properties": {
+        "create": {"type": "boolean"},
+        "automount": {"type": "boolean", "enum": [true]},
+        "annotations": {"type": "object"},
+        "name": {"type": "string"}
+      }
+    },
+    "rbac": {
+      "type": "object",
+      "required": ["create", "helperRoles"],
+      "properties": {
+        "create": {"type": "boolean"},
+        "helperRoles": {
+          "type": "object",
+          "required": ["enabled"],
+          "properties": {
+            "enabled": {"type": "boolean"}
+          }
+        }
+      }
+    },
+    "leaderElection": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": {"type": "boolean"}
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "required": ["enabled", "secure", "port", "service"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "secure": {"type": "boolean"},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "service": {
+          "type": "object",
+          "required": ["annotations"],
+          "properties": {
+            "annotations": {"type": "object"}
+          }
+        }
+      }
+    },
+    "serviceMonitor": {
+      "type": "object",
+      "required": ["enabled", "labels", "interval", "scrapeTimeout"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "labels": {"type": "object"},
+        "interval": {"type": "string", "pattern": "^[0-9]+(ms|s|m|h)$"},
+        "scrapeTimeout": {"type": "string", "pattern": "^[0-9]+(ms|s|m|h)$"}
+      }
+    },
+    "terminationGracePeriodSeconds": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "imagePullSecrets": {"type": "array"},
+    "nameOverride": {"type": "string"},
+    "fullnameOverride": {"type": "string"},
+    "podAnnotations": {"type": "object"},
+    "podLabels": {"type": "object"},
+    "podSecurityContext": {"type": "object"},
+    "securityContext": {"type": "object"},
+    "resources": {"type": "object"},
+    "livenessProbe": {"type": "object"},
+    "readinessProbe": {"type": "object"},
+    "extraArgs": {"type": "array", "items": {"type": "string"}},
+    "extraEnv": {"type": "array"},
+    "volumes": {"type": "array"},
+    "volumeMounts": {"type": "array"},
+    "priorityClassName": {"type": "string"},
+    "nodeSelector": {"type": "object"},
+    "tolerations": {"type": "array"},
+    "affinity": {"type": "object"},
+    "topologySpreadConstraints": {"type": "array"}
+  }
+}

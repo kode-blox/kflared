@@ -1,0 +1,21 @@
+apiVersion: v2
+name: kflared
+description: Gateway controller for Cloudflare Tunnel
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.35.0-0 <1.38.0-0"
+home: https://github.com/kode-blox/kflared
+sources:
+  - https://github.com/kode-blox/kflared
+keywords:
+  - cloudflare
+  - cloudflared
+  - tunnel
+  - gateway-api
+  - kubernetes
+  - controller
+maintainers:
+  - name: Sayak Mukhopadhyay
+annotations:
+  artifacthub.io/license: Apache-2.0

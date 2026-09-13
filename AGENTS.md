@@ -1,4 +1,4 @@
-# kflared - AI Agent Guide
+# KFlared - AI Agent Guide
 
 ## Project Structure
 

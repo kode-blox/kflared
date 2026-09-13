@@ -1,0 +1,48 @@
+{{- if and .Values.rbac.create .Values.rbac.helperRoles.enabled }}
+{{- $root := . }}
+{{- range $kind := list "cloudflareproviders" "cloudflaretunnelbindings" }}
+{{- $short := ternary "cloudflareprovider" "cloudflaretunnelbinding" (eq $kind "cloudflareproviders") }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kflared.fullname" $root }}-{{ $short }}-admin
+  labels:
+    {{- include "kflared.labels" $root | nindent 4 }}
+rules:
+  - apiGroups: ["kflared.kodeblox.com"]
+    resources: [{{ $kind | quote }}]
+    verbs: ["*"]
+  - apiGroups: ["kflared.kodeblox.com"]
+    resources: [{{ printf "%s/status" $kind | quote }}]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kflared.fullname" $root }}-{{ $short }}-editor
+  labels:
+    {{- include "kflared.labels" $root | nindent 4 }}
+rules:
+  - apiGroups: ["kflared.kodeblox.com"]
+    resources: [{{ $kind | quote }}]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["kflared.kodeblox.com"]
+    resources: [{{ printf "%s/status" $kind | quote }}]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kflared.fullname" $root }}-{{ $short }}-viewer
+  labels:
+    {{- include "kflared.labels" $root | nindent 4 }}
+rules:
+  - apiGroups: ["kflared.kodeblox.com"]
+    resources: [{{ $kind | quote }}]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["kflared.kodeblox.com"]
+    resources: [{{ printf "%s/status" $kind | quote }}]
+    verbs: ["get"]
+{{- end }}
+{{- end }}

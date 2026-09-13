@@ -59,12 +59,17 @@ spec:
           type: RuntimeDefault
       containers:
       - command:
-        - /manager
+        - /kflared
         args:
           - --leader-elect
           - --health-probe-bind-address=:8081
         image: controller:latest
         name: manager
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
         ports:
         - containerPort: 8081
           name: health

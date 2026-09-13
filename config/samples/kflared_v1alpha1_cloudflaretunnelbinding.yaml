@@ -4,6 +4,16 @@ metadata:
   labels:
     app.kubernetes.io/name: kflared
     app.kubernetes.io/managed-by: kustomize
-  name: cloudflaretunnelbinding-sample
+  name: public
+  namespace: my-app
 spec:
-  # TODO(user): Add fields here
+  providerRef:
+    name: default
+  gatewayRef:
+    name: traefik
+    sectionName: http
+  gatewayServiceRef:
+    name: traefik
+    port: web
+  connectorReplicas: 2
+  deletionPolicy: Delete

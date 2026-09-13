@@ -15,6 +15,7 @@ endif
 # scaffolded by default. However, you might want to replace it to use other
 # tools. (i.e. podman)
 CONTAINER_TOOL ?= docker
+HELM ?= helm
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -106,11 +107,20 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	"$(GOLANGCI_LINT)" config verify
 
+.PHONY: helm-lint
+helm-lint: ## Lint the supported Helm chart.
+	"$(HELM)" lint ./charts --strict
+
+.PHONY: helm-template
+helm-template: ## Render the supported Helm chart with default and optional resources.
+	"$(HELM)" template kflared ./charts --namespace kflared-system --include-crds >/dev/null
+	"$(HELM)" template kflared ./charts --namespace kflared-system --include-crds --set rbac.helperRoles.enabled=true --set serviceMonitor.enabled=true >/dev/null
+
 ##@ Build
 
 .PHONY: build
-build: manifests generate fmt vet ## Build manager binary.
-	go build -o bin/manager cmd/main.go
+build: manifests generate fmt vet ## Build the kflared binary.
+	go build -o bin/kflared cmd/main.go
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
@@ -120,7 +130,7 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 # Override BASE_IMAGE to build from another registry, e.g.
-# make docker-build IMG=<img> BASE_IMAGE=docker.io/library/golang:1.26
+# make docker-build IMG=<img> BASE_IMAGE=docker.io/library/golang:1.27
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build $(if $(BASE_IMAGE),--build-arg BASE_IMAGE=$(BASE_IMAGE)) -t ${IMG} .

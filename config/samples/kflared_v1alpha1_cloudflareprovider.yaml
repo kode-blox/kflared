@@ -4,6 +4,14 @@ metadata:
   labels:
     app.kubernetes.io/name: kflared
     app.kubernetes.io/managed-by: kustomize
-  name: cloudflareprovider-sample
+  name: default
 spec:
-  # TODO(user): Add fields here
+  accountID: 0123456789abcdef0123456789abcdef
+  apiTokenSecretRef:
+    name: cloudflare-api-token
+    key: api-token
+  allowedDNSZones:
+  - example.com
+  bindingNamespaceSelector:
+    matchLabels:
+      kflared.kodeblox.com/cloudflare-provider: default

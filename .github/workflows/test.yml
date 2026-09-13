@@ -27,3 +27,39 @@ jobs:
         run: |
           go mod tidy
           make test
+
+      - name: Verify generated files
+        run: git diff --exit-code
+
+  helm:
+    permissions:
+      contents: read
+    name: Validate Helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.2.4
+
+      - name: Lint chart
+        run: helm lint ./charts --strict
+
+      - name: Render default chart
+        run: helm template kflared ./charts --namespace kflared-system --include-crds >/dev/null
+
+      - name: Render optional resources and overrides
+        run: >-
+          helm template custom ./charts
+          --namespace custom-system
+          --include-crds
+          --set fullnameOverride=custom-controller
+          --set kubernetesComponent=custom
+          --set rbac.helperRoles.enabled=true
+          --set serviceMonitor.enabled=true
+          >/dev/null

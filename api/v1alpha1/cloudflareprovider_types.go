@@ -21,38 +21,49 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
+const (
+	ProviderConditionAccepted         = "Accepted"
+	ProviderConditionCredentialsValid = "CredentialsValid"
+)
 
-// CloudflareProviderSpec defines the desired state of CloudflareProvider
-type CloudflareProviderSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
-	// foo is an example field of CloudflareProvider. Edit cloudflareprovider_types.go to remove/update
-	// +optional
-	Foo *string `json:"foo,omitempty"`
+// SecretKeyReference identifies one key in a Secret in the controller namespace.
+type SecretKeyReference struct {
+	// name is the Secret name.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+	// key is the Secret data key containing the API token.
+	// +kubebuilder:validation:MinLength=1
+	Key string `json:"key"`
 }
 
-// CloudflareProviderStatus defines the observed state of CloudflareProvider.
+// CloudflareProviderSpec defines a Cloudflare account and the tenants allowed to use it.
+type CloudflareProviderSpec struct {
+	// accountID is the Cloudflare account identifier.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=32
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="accountID is immutable"
+	AccountID string `json:"accountID"`
+
+	// apiTokenSecretRef refers to a Secret in kflared-system.
+	APITokenSecretRef SecretKeyReference `json:"apiTokenSecretRef"`
+
+	// allowedDNSZones is the explicit set of DNS suffixes this provider may publish.
+	// +kubebuilder:validation:MinItems=1
+	// +listType=set
+	AllowedDNSZones []string `json:"allowedDNSZones"`
+
+	// bindingNamespaceSelector selects namespaces permitted to reference this provider.
+	// An empty selector intentionally permits all namespaces.
+	BindingNamespaceSelector metav1.LabelSelector `json:"bindingNamespaceSelector"`
+}
+
+// CloudflareProviderStatus defines the observed provider state.
 type CloudflareProviderStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// observedGeneration is the most recent generation processed by the controller.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
-	// conditions represent the current state of the CloudflareProvider resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// conditions report provider validation and credential health.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -61,31 +72,26 @@ type CloudflareProviderStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Cluster
+// +kubebuilder:resource:scope=Cluster,shortName=cfp
+// +kubebuilder:printcolumn:name="Accepted",type=string,JSONPath=".status.conditions[?(@.type=='Accepted')].status"
+// +kubebuilder:printcolumn:name="Credentials",type=string,JSONPath=".status.conditions[?(@.type=='CredentialsValid')].status"
 
-// CloudflareProvider is the Schema for the cloudflareproviders API
+// CloudflareProvider is the Schema for the cloudflareproviders API.
 type CloudflareProvider struct {
-	metav1.TypeMeta `json:",inline"`
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	// metadata is a standard object metadata
-	// +optional
-	metav1.ObjectMeta `json:"metadata,omitzero"`
-
-	// spec defines the desired state of CloudflareProvider
-	// +required
 	Spec CloudflareProviderSpec `json:"spec"`
-
-	// status defines the observed state of CloudflareProvider
 	// +optional
-	Status CloudflareProviderStatus `json:"status,omitzero"`
+	Status CloudflareProviderStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// CloudflareProviderList contains a list of CloudflareProvider
+// CloudflareProviderList contains a list of CloudflareProvider.
 type CloudflareProviderList struct {
 	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitzero"`
+	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []CloudflareProvider `json:"items"`
 }
 
