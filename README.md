@@ -47,10 +47,12 @@ kubectl -n kflared-system create secret generic cloudflare-api-token \
 
 Kustomize is the canonical manifest source. Install prerequisites first, then build and deploy an image:
 
-```sh
-make docker-build docker-push IMG=<registry>/kflared:<tag>
-make install
-make deploy IMG=<registry>/kflared:<tag>
+Project automation requires Go and PowerShell 7 or newer. Task is pinned in the isolated `tools/task` module and does not need to be installed globally. Run tasks through the repository-local wrapper, for example `./task.ps1 --list` (PowerShell: `.\\task.ps1 --list`).
+
+```powershell
+./task.ps1 docker-build docker-push IMG=<registry>/kflared:<tag>
+./task.ps1 install
+./task.ps1 deploy IMG=<registry>/kflared:<tag>
 ```
 
 Create a provider, label an allowed tenant namespace, and create a binding. Adapt the examples under [`config/samples`](config/samples) to the actual account ID, DNS zones, Gateway, listener, and Traefik Service.
@@ -79,7 +81,7 @@ go1.27.0 test ./...
 go1.27.0 build ./cmd
 ```
 
-Generated code and manifests remain Kubebuilder-controlled. Use the pinned controller-gen version from the Makefile and verify the resulting diff. See [testing](docs/testing.md).
+Generated code and manifests remain Kubebuilder-controlled. Use the pinned controller-gen version from `Taskfile.yaml` and verify the resulting diff. See [testing](docs/testing.md).
 
 The supported Helm chart is rooted at [`charts`](charts). It combines the current Helm starter structure with the controller resources derived from Kubebuilder's Kustomize output. Its plain CRDs live in Helm's special `charts/crds/` directory; pass `--include-crds` when rendering the complete chart.
 

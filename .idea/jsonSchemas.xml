@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="JsonSchemaMappingsProjectConfiguration">
+    <state>
+      <map>
+        <entry key="Golangci-lint Custom Plugins Configuration">
+          <value>
+            <SchemaInfo>
+              <option name="name" value="Golangci-lint Custom Plugins Configuration" />
+              <option name="relativePathToSchema" value="https://golangci-lint.run/jsonschema/custom-gcl.jsonschema.json" />
+              <option name="applicationDefined" value="true" />
+              <option name="patterns">
+                <list>
+                  <Item>
+                    <option name="path" value=".custom-gcl.yml" />
+                  </Item>
+                </list>
+              </option>
+            </SchemaInfo>
+          </value>
+        </entry>
+      </map>
+    </state>
+  </component>
+</project>

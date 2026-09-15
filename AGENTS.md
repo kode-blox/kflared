@@ -12,7 +12,8 @@ internal/webhook/*             Validation/defaulting (if present)
 config/crd/bases/*             Generated CRDs (DO NOT EDIT)
 config/rbac/role.yaml          Generated RBAC (DO NOT EDIT)
 config/samples/*               Example CRs (edit these)
-Makefile                       Build/test/deploy commands
+Taskfile.yaml                  Build/test/deploy commands
+tools/task/go.mod, go.sum      Pinned Task runner module
 PROJECT                        Kubebuilder metadata Auto-generated (DO NOT EDIT)
 ```
 
@@ -37,10 +38,10 @@ Multi-group layout organizes APIs by group name (e.g., `batch`, `apps`). Check t
 ## Critical Rules
 
 ### Never Edit These (Auto-Generated)
-- `config/crd/bases/*.yaml` - from `make manifests`
-- `config/rbac/role.yaml` - from `make manifests`
-- `config/webhook/manifests.yaml` - from `make manifests`
-- `**/zz_generated.*.go` - from `make generate`
+- `config/crd/bases/*.yaml` - from `go -C tools/task tool task --dir ../.. manifests`
+- `config/rbac/role.yaml` - from `go -C tools/task tool task --dir ../.. manifests`
+- `config/webhook/manifests.yaml` - from `go -C tools/task tool task --dir ../.. manifests`
+- `**/zz_generated.*.go` - from `go -C tools/task tool task --dir ../.. generate`
 - `PROJECT` - from `kubebuilder [OPTIONS]`
 
 ### Never Remove Scaffold Markers
@@ -60,14 +61,14 @@ Ensure you run them against a dedicated [Kind](https://kind.sigs.k8s.io/) cluste
 
 **After editing `*_types.go` or markers:**
 ```
-make manifests  # Regenerate CRDs/RBAC from markers
-make generate   # Regenerate DeepCopy methods
+go -C tools/task tool task --dir ../.. manifests  # Regenerate CRDs/RBAC from markers
+go -C tools/task tool task --dir ../.. generate   # Regenerate DeepCopy methods
 ```
 
 **After editing `*.go` files:**
 ```
-make lint-fix   # Auto-fix code style
-make test       # Run unit tests
+go -C tools/task tool task --dir ../.. lint-fix   # Auto-fix code style
+go -C tools/task tool task --dir ../.. test       # Run unit tests
 ```
 
 ## CLI Commands Cheat Sheet
@@ -143,23 +144,22 @@ kubebuilder create webhook \
 
 ## Testing & Development
 
-```bash
-make test              # Run unit tests (uses envtest: real K8s API + etcd)
-make run               # Run locally (uses current kubeconfig context)
+```powershell
+go -C tools/task tool task --dir ../.. test  # Run unit tests (uses envtest: real K8s API + etcd)
+go -C tools/task tool task --dir ../.. run   # Run locally (uses current kubeconfig context)
 ```
 
 Tests use **Ginkgo + Gomega** (BDD style). Check `suite_test.go` for setup.
 
 ## Deployment Workflow
 
-```bash
+```powershell
 # 1. Regenerate manifests
-make manifests generate
+go -C tools/task tool task --dir ../.. manifests generate
 
 # 2. Build & deploy
-export IMG=<registry>/<project>:tag
-make docker-build docker-push IMG=$IMG  # Or: kind load docker-image $IMG --name <cluster>
-make deploy IMG=$IMG
+go -C tools/task tool task --dir ../.. docker-build docker-push IMG=<registry>/<project>:tag
+go -C tools/task tool task --dir ../.. deploy IMG=<registry>/<project>:tag
 
 # 3. Test
 kubectl apply -k config/samples/
@@ -252,9 +252,9 @@ Generated code includes: status conditions (`metav1.Condition`), finalizers, own
 
 ### Option 1: YAML Bundle (Kustomize)
 
-```bash
+```powershell
 # Generate dist/install.yaml from Kustomize manifests
-make build-installer IMG=<registry>/<project>:tag
+go -C tools/task tool task --dir ../.. build-installer IMG=<registry>/<project>:tag
 ```
 
 **Key points:**
@@ -275,13 +275,8 @@ kubebuilder edit --plugins=helm/v2-alpha --output-dir=charts  # Generates charts
 ```
 
 **For development:**
-```bash
-make helm-deploy IMG=<registry>/<project>:<tag>          # Deploy manager via Helm
-make helm-deploy IMG=$IMG HELM_EXTRA_ARGS="--set ..."    # Deploy with custom values
-make helm-status                                         # Show release status
-make helm-uninstall                                      # Remove release
-make helm-history                                        # View release history
-make helm-rollback                                       # Rollback to previous version
+```powershell
+go -C tools/task tool task --dir ../.. helm-lint helm-template
 ```
 
 **For end users/production:**
@@ -296,9 +291,8 @@ helm install my-release ./<output-dir>/chart/ --namespace <ns> --create-namespac
 
 ### Publish Container Image
 
-```bash
-export IMG=<registry>/<project>:<version>
-make docker-build docker-push IMG=$IMG
+```powershell
+go -C tools/task tool task --dir ../.. docker-build docker-push IMG=<registry>/<project>:<version>
 ```
 
 ## References

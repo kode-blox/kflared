@@ -64,12 +64,17 @@ var _ = Describe("Manager", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
 
 		By("installing CRDs")
-		cmd = exec.Command("make", "install")
+		cmd = exec.Command(
+			"go", "-C", "tools/task", "tool", "task", "--dir", "../..", "install",
+		)
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
 
 		By("deploying the controller-manager")
-		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
+		cmd = exec.Command(
+			"go", "-C", "tools/task", "tool", "task", "--dir", "../..", "deploy",
+			fmt.Sprintf("IMG=%s", managerImage),
+		)
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 	})
@@ -82,11 +87,15 @@ var _ = Describe("Manager", Ordered, func() {
 		_, _ = utils.Run(cmd)
 
 		By("undeploying the controller-manager")
-		cmd = exec.Command("make", "undeploy")
+		cmd = exec.Command(
+			"go", "-C", "tools/task", "tool", "task", "--dir", "../..", "undeploy",
+		)
 		_, _ = utils.Run(cmd)
 
 		By("uninstalling CRDs")
-		cmd = exec.Command("make", "uninstall")
+		cmd = exec.Command(
+			"go", "-C", "tools/task", "tool", "task", "--dir", "../..", "uninstall",
+		)
 		_, _ = utils.Run(cmd)
 
 		By("removing manager namespace")

@@ -15,6 +15,6 @@ go1.27.0 test ./internal/planner ./internal/controller
 go1.27.0 test -race ./...
 ```
 
-CI runs `make test`, verifies generated-file cleanliness, runs the configured linter, validates and renders the Helm chart, and runs the scaffolded Kind E2E suite.
+CI runs `go -C tools/task tool task --dir ../.. test`, verifies generated-file cleanliness, runs the configured linter, validates and renders the Helm chart, and runs the scaffolded Kind E2E suite.
 
 No Gateway API conformance claim is made for integration mode. Applicable upstream conformance begins only after a native GatewayClass mode exists with an unmodified stock data plane.

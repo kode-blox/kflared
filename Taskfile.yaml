@@ -1,0 +1,652 @@
+version: "3"
+
+vars:
+  IMG: '{{.IMG | default "controller:latest"}}'
+  BASE_IMAGE: '{{.BASE_IMAGE | default ""}}'
+  CONTAINER_TOOL: '{{.CONTAINER_TOOL | default "docker"}}'
+  HELM: '{{.HELM | default "helm"}}'
+  KUBECTL: '{{.KUBECTL | default "kubectl"}}'
+  KIND: '{{.KIND | default "kind"}}'
+  KIND_CLUSTER: '{{.KIND_CLUSTER | default "kflared-test-e2e"}}'
+  PLATFORMS: '{{.PLATFORMS | default "linux/arm64,linux/amd64,linux/s390x,linux/ppc64le"}}'
+  IGNORE_NOT_FOUND: '{{index . "ignore-not-found" | default (.IGNORE_NOT_FOUND | default "false")}}'
+  LOCALBIN: '{{.LOCALBIN | default (printf "%s/bin" .ROOT_DIR)}}'
+  KUSTOMIZE: '{{.KUSTOMIZE | default (printf "%s/kustomize%s" .LOCALBIN (exeExt))}}'
+  CONTROLLER_GEN: '{{.CONTROLLER_GEN | default (printf "%s/controller-gen%s" .LOCALBIN (exeExt))}}'
+  ENVTEST: '{{.ENVTEST | default (printf "%s/setup-envtest%s" .LOCALBIN (exeExt))}}'
+  GOLANGCI_LINT: '{{.GOLANGCI_LINT | default (printf "%s/golangci-lint%s" .LOCALBIN (exeExt))}}'
+  KUSTOMIZE_VERSION: '{{.KUSTOMIZE_VERSION | default "v5.8.1"}}'
+  CONTROLLER_TOOLS_VERSION: '{{.CONTROLLER_TOOLS_VERSION | default "v0.22.0"}}'
+  GOLANGCI_LINT_VERSION: '{{.GOLANGCI_LINT_VERSION | default "v2.13.1"}}'
+
+tasks:
+  default:
+    desc: Build KFlared
+    cmds:
+      - task: build
+
+  all:
+    desc: Build KFlared
+    cmds:
+      - task: build
+
+  help:
+    desc: Display available tasks
+    deps: [require-pwsh]
+    cmds:
+      - '"{{.TASK_EXE}}" --list'
+
+  manifests:
+    desc: Generate WebhookConfiguration, ClusterRole, and CustomResourceDefinition objects
+    deps: [require-pwsh]
+    env:
+      CONTROLLER_GEN: '{{.CONTROLLER_GEN}}'
+    cmds:
+      - task: controller-gen
+      - cmd: |
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '
+            & $env:CONTROLLER_GEN rbac:roleName=manager-role crd webhook "paths=./..." `
+              output:crd:artifacts:config=config/crd/bases
+            exit $LASTEXITCODE
+          '
+
+  generate:
+    desc: Generate DeepCopy method implementations
+    deps: [require-pwsh]
+    vars:
+      DEFAULT_YEAR:
+        sh: pwsh -NoLogo -NoProfile -NonInteractive -Command '(Get-Date).Year'
+    env:
+      CONTROLLER_GEN: '{{.CONTROLLER_GEN}}'
+      YEAR: '{{.YEAR | default .DEFAULT_YEAR}}'
+    cmds:
+      - task: controller-gen
+      - cmd: |
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '
+            & $env:CONTROLLER_GEN "object:headerFile=hack\boilerplate.go.txt,year=$env:YEAR" "paths=./..."
+            exit $LASTEXITCODE
+          '
+
+  fmt:
+    desc: Run go fmt against the code
+    deps: [require-pwsh]
+    cmds:
+      - go fmt ./...
+
+  vet:
+    desc: Run go vet against the code
+    deps: [require-pwsh]
+    cmds:
+      - go vet ./...
+
+  test:
+    desc: Run unit tests
+    deps: [require-pwsh]
+    vars:
+      DEFAULT_ENVTEST_K8S_VERSION:
+        sh: |
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '
+            $module = & go list -m -json k8s.io/api 2>$null | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $version = if ($module.Replace -and $module.Replace.Version) {
+              $module.Replace.Version
+            } else {
+              $module.Version
+            }
+            if (-not $version) {
+              Write-Error "Set ENVTEST_K8S_VERSION manually because the k8s.io/api replacement has no tag."
+              exit 1
+            }
+            $parts = $version.TrimStart("v").Split(".")
+            Write-Output "1.$($parts[1])"
+          '
+    env:
+      ENVTEST: '{{.ENVTEST}}'
+      ENVTEST_K8S_VERSION: '{{.ENVTEST_K8S_VERSION | default .DEFAULT_ENVTEST_K8S_VERSION}}'
+      LOCALBIN: '{{.LOCALBIN}}'
+    cmds:
+      - task: manifests
+      - task: generate
+      - task: fmt
+      - task: vet
+      - task: setup-envtest
+      - cmd: |
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '
+            $assets = & $env:ENVTEST use $env:ENVTEST_K8S_VERSION --bin-dir $env:LOCALBIN -p path
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+            $packages = @(& go list ./...)
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $packages = @($packages | Where-Object { $_ -notmatch "/e2e$" })
+
+            $env:KUBEBUILDER_ASSETS = ($assets | Out-String).Trim()
+            & go test @packages -coverprofile cover.out
+            exit $LASTEXITCODE
+          '
+
+  setup-test-e2e:
+    desc: Set up a Kind cluster for E2E tests if it does not exist
+    deps: [require-pwsh]
+    env:
+      KIND: '{{.KIND}}'
+      KIND_CLUSTER: '{{.KIND_CLUSTER}}'
+    cmds:
+      - cmd: |
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '
+            if (-not (Get-Command $env:KIND -ErrorAction SilentlyContinue)) {
+              Write-Error "Kind is not installed. Please install Kind manually."
+              exit 1
+            }
+
+            $clusters = (& $env:KIND get clusters | Out-String)
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+            if ($clusters.Contains($env:KIND_CLUSTER)) {
+              Write-Output "Kind cluster $env:KIND_CLUSTER already exists. Skipping creation."
+              exit 0
+            }
+
+            Write-Output "Creating Kind cluster $env:KIND_CLUSTER..."
+            & $env:KIND create cluster --name $env:KIND_CLUSTER
+            exit $LASTEXITCODE
+          '
+
+  test-e2e:
+    desc: Run E2E tests against an isolated Kind cluster
+    deps: [require-pwsh]
+    cmds:
+      - task: setup-test-e2e
+      - task: manifests
+      - task: generate
+      - task: fmt
+      - task: vet
+      - go test -tags=e2e ./test/e2e/ -v -ginkgo.v
+      - task: cleanup-test-e2e
+    env:
+      KIND: '{{.KIND}}'
+      KIND_CLUSTER: '{{.KIND_CLUSTER}}'
+
+  cleanup-test-e2e:
+    desc: Tear down the Kind cluster used for E2E tests
+    deps: [require-pwsh]
+    cmds:
+      - '"{{.KIND}}" delete cluster --name "{{.KIND_CLUSTER}}"'
+
+  lint:
+    desc: Run golangci-lint
+    deps: [require-pwsh]
+    cmds:
+      - task: golangci-lint
+      - '"{{.GOLANGCI_LINT}}" run'
+
+  lint-fix:
+    desc: Run golangci-lint and perform fixes
+    deps: [require-pwsh]
+    cmds:
+      - task: golangci-lint
+      - '"{{.GOLANGCI_LINT}}" run --fix'
+
+  lint-config:
+    desc: Verify golangci-lint configuration
+    deps: [require-pwsh]
+    cmds:
+      - task: golangci-lint
+      - '"{{.GOLANGCI_LINT}}" config verify'
+
+  helm-lint:
+    desc: Lint the supported Helm chart
+    deps: [require-pwsh]
+    cmds:
+      - '"{{.HELM}}" lint ./charts --strict'
+
+  helm-template:
+    desc: Render the supported Helm chart with default and optional resources
+    deps: [require-pwsh]
+    env:
+      HELM: '{{.HELM}}'
+    cmds:
+      - cmd: |
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '
+            & $env:HELM template kflared ./charts --namespace kflared-system --include-crds | Out-Null
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+            & $env:HELM template kflared ./charts --namespace kflared-system --include-crds `
+              --set rbac.helperRoles.enabled=true `
+              --set serviceMonitor.enabled=true | Out-Null
+            exit $LASTEXITCODE
+          '
+
+  build:
+    desc: Build the KFlared binary
+    deps: [require-pwsh]
+    cmds:
+      - task: manifests
+      - task: generate
+      - task: fmt
+      - task: vet
+      - go build -o bin/kflared{{exeExt}} cmd/main.go
+
+  run:
+    desc: Run the controller from the host
+    deps: [require-pwsh]
+    cmds:
+      - task: manifests
+      - task: generate
+      - task: fmt
+      - task: vet
+      - go run ./cmd/main.go
+
+  docker-build:
+    desc: Build the manager container image
+    deps: [require-pwsh]
+    env:
+      BASE_IMAGE: '{{.BASE_IMAGE}}'
+      CONTAINER_TOOL: '{{.CONTAINER_TOOL}}'
+      IMG: '{{.IMG}}'
+    cmds:
+      - cmd: |
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '
+            $arguments = @("build")
+            if ($env:BASE_IMAGE) {
+              $arguments += @("--build-arg", "BASE_IMAGE=$env:BASE_IMAGE")
+            }
+            $arguments += @("-t", $env:IMG, ".")
+
+            & $env:CONTAINER_TOOL @arguments
+            exit $LASTEXITCODE
+          '
+
+  docker-push:
+    desc: Push the manager container image
+    deps: [require-pwsh]
+    cmds:
+      - '"{{.CONTAINER_TOOL}}" push "{{.IMG}}"'
+
+  docker-buildx:
+    desc: Build and push the manager image for multiple platforms
+    deps: [require-pwsh]
+    env:
+      BASE_IMAGE: '{{.BASE_IMAGE}}'
+      CONTAINER_TOOL: '{{.CONTAINER_TOOL}}'
+      IMG: '{{.IMG}}'
+      PLATFORMS: '{{.PLATFORMS}}'
+      TASK_ROOT: '{{.ROOT_DIR}}'
+    cmds:
+      - cmd: |
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '
+            $ErrorActionPreference = "Stop"
+            function Invoke-IgnoredNativeCommand([scriptblock] $Command) {
+              try {
+                & $Command
+              } catch {
+                Write-Warning $_.Exception.Message
+              }
+            }
+
+            $dockerfilePath = Join-Path $env:TASK_ROOT "Dockerfile"
+            $crossPath = Join-Path $env:TASK_ROOT "Dockerfile.cross"
+            $dockerfile = [System.IO.File]::ReadAllText($dockerfilePath)
+            $from = [regex]::new("(?m)^FROM\b")
+            $cross = $from.Replace($dockerfile, "FROM --platform=`${BUILDPLATFORM}", 1)
+            if ($cross -eq $dockerfile) {
+              throw "Dockerfile does not contain a FROM instruction"
+            }
+            [System.IO.File]::WriteAllText(
+              $crossPath,
+              $cross,
+              [System.Text.UTF8Encoding]::new($false)
+            )
+
+            Invoke-IgnoredNativeCommand {
+              & $env:CONTAINER_TOOL buildx create --name kflared-builder
+            }
+
+            & $env:CONTAINER_TOOL buildx use kflared-builder
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+            $arguments = @("build", "--push", "--platform=$env:PLATFORMS")
+            if ($env:BASE_IMAGE) {
+              $arguments += @("--build-arg", "BASE_IMAGE=$env:BASE_IMAGE")
+            }
+            $arguments += @("--tag", $env:IMG, "-f", $crossPath, ".")
+            Invoke-IgnoredNativeCommand {
+              & $env:CONTAINER_TOOL buildx @arguments
+            }
+
+            Invoke-IgnoredNativeCommand {
+              & $env:CONTAINER_TOOL buildx rm kflared-builder
+            }
+            Remove-Item -LiteralPath $crossPath
+            exit 0
+          '
+
+  build-installer:
+    desc: Generate a consolidated YAML installer
+    deps: [require-pwsh]
+    env:
+      IMG: '{{.IMG}}'
+      KUSTOMIZE: '{{.KUSTOMIZE}}'
+      TASK_ROOT: '{{.ROOT_DIR}}'
+    cmds:
+      - task: manifests
+      - task: generate
+      - task: kustomize
+      - cmd: |
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '
+            $ErrorActionPreference = "Stop"
+            New-Item -ItemType Directory -Path (Join-Path $env:TASK_ROOT "dist") -Force | Out-Null
+
+            Push-Location (Join-Path $env:TASK_ROOT "config/manager")
+            try {
+              & $env:KUSTOMIZE edit set image "controller=$env:IMG"
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            } finally {
+              Pop-Location
+            }
+
+            $lines = @(& $env:KUSTOMIZE build (Join-Path $env:TASK_ROOT "config/default"))
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $content = ($lines -join "`n") + "`n"
+            [System.IO.File]::WriteAllText(
+              (Join-Path $env:TASK_ROOT "dist/install.yaml"),
+              $content,
+              [System.Text.UTF8Encoding]::new($false)
+            )
+          '
+
+  install:
+    desc: Install CRDs into the cluster selected by the current kubeconfig
+    deps: [require-pwsh]
+    env:
+      KUBECTL: '{{.KUBECTL}}'
+      KUSTOMIZE: '{{.KUSTOMIZE}}'
+    cmds:
+      - task: manifests
+      - task: kustomize
+      - cmd: |
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '
+            $output = @(& $env:KUSTOMIZE build config/crd 2>$null)
+            if ($LASTEXITCODE -ne 0) { $output = @() }
+
+            if ($output.Count -eq 0) {
+              Write-Output "No CRDs to install; skipping."
+              exit 0
+            }
+
+            $output | & $env:KUBECTL apply -f -
+            exit $LASTEXITCODE
+          '
+
+  uninstall:
+    desc: Uninstall CRDs from the cluster selected by the current kubeconfig
+    deps: [require-pwsh]
+    env:
+      IGNORE_NOT_FOUND: '{{.IGNORE_NOT_FOUND}}'
+      KUBECTL: '{{.KUBECTL}}'
+      KUSTOMIZE: '{{.KUSTOMIZE}}'
+    cmds:
+      - task: manifests
+      - task: kustomize
+      - cmd: |
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '
+            $output = @(& $env:KUSTOMIZE build config/crd 2>$null)
+            if ($LASTEXITCODE -ne 0) { $output = @() }
+
+            if ($output.Count -eq 0) {
+              Write-Output "No CRDs to delete; skipping."
+              exit 0
+            }
+
+            $output | & $env:KUBECTL delete "--ignore-not-found=$env:IGNORE_NOT_FOUND" -f -
+            exit $LASTEXITCODE
+          '
+
+  deploy:
+    desc: Deploy the controller to the cluster selected by the current kubeconfig
+    deps: [require-pwsh]
+    env:
+      IMG: '{{.IMG}}'
+      KUBECTL: '{{.KUBECTL}}'
+      KUSTOMIZE: '{{.KUSTOMIZE}}'
+    cmds:
+      - task: manifests
+      - task: kustomize
+      - cmd: |
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '
+            $ErrorActionPreference = "Stop"
+            Push-Location config/manager
+            try {
+              & $env:KUSTOMIZE edit set image "controller=$env:IMG"
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            } finally {
+              Pop-Location
+            }
+
+            $output = @(& $env:KUSTOMIZE build config/default)
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $output | & $env:KUBECTL apply -f -
+            exit $LASTEXITCODE
+          '
+
+  undeploy:
+    desc: Undeploy the controller from the cluster selected by the current kubeconfig
+    deps: [require-pwsh]
+    env:
+      IGNORE_NOT_FOUND: '{{.IGNORE_NOT_FOUND}}'
+      KUBECTL: '{{.KUBECTL}}'
+      KUSTOMIZE: '{{.KUSTOMIZE}}'
+    cmds:
+      - task: kustomize
+      - cmd: |
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '
+            $output = @(& $env:KUSTOMIZE build config/default)
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $output | & $env:KUBECTL delete "--ignore-not-found=$env:IGNORE_NOT_FOUND" -f -
+            exit $LASTEXITCODE
+          '
+
+  require-pwsh:
+    internal: true
+    run: once
+    cmds:
+      - cmd: |
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '
+            if ($PSVersionTable.PSVersion.Major -lt 7) {
+              Write-Error "KFlared requires PowerShell 7 or newer."
+              exit 1
+            }
+          '
+
+  localbin:
+    internal: true
+    run: once
+    deps: [require-pwsh]
+    env:
+      LOCALBIN: '{{.LOCALBIN}}'
+    cmds:
+      - cmd: |
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '
+            New-Item -ItemType Directory -Path $env:LOCALBIN -Force | Out-Null
+          '
+
+  go-install-tool:
+    internal: true
+    deps: [require-pwsh]
+    env:
+      EXE_EXT: '{{exeExt}}'
+      TOOL_NAME: '{{.TOOL_NAME}}'
+      TOOL_PACKAGE: '{{.TOOL_PACKAGE}}'
+      TOOL_PATH: '{{.TOOL_PATH}}'
+      TOOL_VERSION: '{{.TOOL_VERSION}}'
+    cmds:
+      - task: localbin
+      - cmd: |
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '
+            $ErrorActionPreference = "Stop"
+            $toolPath = [System.IO.Path]::GetFullPath($env:TOOL_PATH)
+            $versionPath = "$toolPath.version"
+
+            if (Test-Path -LiteralPath $toolPath -PathType Leaf) {
+              if (-not (Test-Path -LiteralPath $versionPath -PathType Leaf)) {
+                exit 0
+              }
+              if ((Get-Content -LiteralPath $versionPath -Raw).Trim() -eq $env:TOOL_VERSION) {
+                exit 0
+              }
+            }
+
+            $destination = Split-Path -Parent $toolPath
+            New-Item -ItemType Directory -Path $destination -Force | Out-Null
+            $installedPath = Join-Path $destination "$($env:TOOL_NAME)$($env:EXE_EXT)"
+            $env:GOBIN = $destination
+
+            Write-Output "Downloading $($env:TOOL_PACKAGE)@$($env:TOOL_VERSION)"
+            & go install "$($env:TOOL_PACKAGE)@$($env:TOOL_VERSION)"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+            if ($installedPath -ne $toolPath) {
+              Move-Item -LiteralPath $installedPath -Destination $toolPath -Force
+            }
+            [System.IO.File]::WriteAllText($versionPath, "$($env:TOOL_VERSION)`n")
+          '
+
+  kustomize:
+    desc: Download kustomize locally if necessary
+    run: once
+    cmds:
+      - task: go-install-tool
+        vars:
+          TOOL_NAME: kustomize
+          TOOL_PACKAGE: sigs.k8s.io/kustomize/kustomize/v5
+          TOOL_PATH: '{{.KUSTOMIZE}}'
+          TOOL_VERSION: '{{.KUSTOMIZE_VERSION}}'
+
+  controller-gen:
+    desc: Download controller-gen locally if necessary
+    run: once
+    cmds:
+      - task: go-install-tool
+        vars:
+          TOOL_NAME: controller-gen
+          TOOL_PACKAGE: sigs.k8s.io/controller-tools/cmd/controller-gen
+          TOOL_PATH: '{{.CONTROLLER_GEN}}'
+          TOOL_VERSION: '{{.CONTROLLER_TOOLS_VERSION}}'
+
+  envtest:
+    desc: Download setup-envtest locally if necessary
+    run: once
+    vars:
+      DEFAULT_ENVTEST_VERSION:
+        sh: |
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '
+            $module = & go list -m -json sigs.k8s.io/controller-runtime 2>$null | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $version = if ($module.Replace -and $module.Replace.Version) {
+              $module.Replace.Version
+            } else {
+              $module.Version
+            }
+            if (-not $version) {
+              Write-Error "Set ENVTEST_VERSION manually because the controller-runtime replacement has no tag."
+              exit 1
+            }
+            Write-Output $version
+          '
+    cmds:
+      - task: go-install-tool
+        vars:
+          TOOL_NAME: setup-envtest
+          TOOL_PACKAGE: sigs.k8s.io/controller-runtime/tools/setup-envtest
+          TOOL_PATH: '{{.ENVTEST}}'
+          TOOL_VERSION: '{{.ENVTEST_VERSION | default .DEFAULT_ENVTEST_VERSION}}'
+
+  setup-envtest:
+    desc: Download the binaries required for envtest
+    deps: [require-pwsh]
+    vars:
+      DEFAULT_ENVTEST_K8S_VERSION:
+        sh: |
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '
+            $module = & go list -m -json k8s.io/api 2>$null | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $version = if ($module.Replace -and $module.Replace.Version) {
+              $module.Replace.Version
+            } else {
+              $module.Version
+            }
+            if (-not $version) {
+              Write-Error "Set ENVTEST_K8S_VERSION manually because the k8s.io/api replacement has no tag."
+              exit 1
+            }
+            $parts = $version.TrimStart("v").Split(".")
+            Write-Output "1.$($parts[1])"
+          '
+    env:
+      ENVTEST: '{{.ENVTEST}}'
+      ENVTEST_K8S_VERSION: '{{.ENVTEST_K8S_VERSION | default .DEFAULT_ENVTEST_K8S_VERSION}}'
+      LOCALBIN: '{{.LOCALBIN}}'
+    cmds:
+      - task: envtest
+      - cmd: |
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '
+            Write-Output "Setting up envtest binaries for Kubernetes version $env:ENVTEST_K8S_VERSION..."
+            & $env:ENVTEST use $env:ENVTEST_K8S_VERSION --bin-dir $env:LOCALBIN -p path
+            if ($LASTEXITCODE -ne 0) {
+              Write-Error "Failed to set up envtest binaries for version $env:ENVTEST_K8S_VERSION."
+              exit $LASTEXITCODE
+            }
+          '
+
+  golangci-lint:
+    desc: Download golangci-lint locally if necessary
+    run: once
+    deps: [require-pwsh]
+    env:
+      EXE_EXT: '{{exeExt}}'
+      GOLANGCI_LINT: '{{.GOLANGCI_LINT}}'
+      GOLANGCI_LINT_VERSION: '{{.GOLANGCI_LINT_VERSION}}'
+      TASK_ROOT: '{{.ROOT_DIR}}'
+    cmds:
+      - task: localbin
+      - cmd: |
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '
+            $ErrorActionPreference = "Stop"
+            $toolPath = [System.IO.Path]::GetFullPath($env:GOLANGCI_LINT)
+            $versionPath = "$toolPath.version"
+            $customConfig = Join-Path $env:TASK_ROOT ".custom-gcl.yml"
+            $desiredVersion = if (Test-Path -LiteralPath $customConfig -PathType Leaf) {
+              "$($env:GOLANGCI_LINT_VERSION)-custom"
+            } else {
+              $env:GOLANGCI_LINT_VERSION
+            }
+
+            if (Test-Path -LiteralPath $toolPath -PathType Leaf) {
+              if (-not (Test-Path -LiteralPath $versionPath -PathType Leaf)) {
+                exit 0
+              }
+              if ((Get-Content -LiteralPath $versionPath -Raw).Trim() -eq $desiredVersion) {
+                exit 0
+              }
+            }
+
+            $destination = Split-Path -Parent $toolPath
+            New-Item -ItemType Directory -Path $destination -Force | Out-Null
+            $installedPath = Join-Path $destination "golangci-lint$($env:EXE_EXT)"
+            $env:GOBIN = $destination
+
+            Write-Output "Downloading github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$($env:GOLANGCI_LINT_VERSION)"
+            & go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$($env:GOLANGCI_LINT_VERSION)"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+            if (Test-Path -LiteralPath $customConfig -PathType Leaf) {
+              Write-Output "Building custom golangci-lint with plugins..."
+              & $installedPath custom --destination $destination --name golangci-lint-custom
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              $customPath = Join-Path $destination "golangci-lint-custom$($env:EXE_EXT)"
+              Move-Item -LiteralPath $customPath -Destination $toolPath -Force
+            } elseif ($installedPath -ne $toolPath) {
+              Move-Item -LiteralPath $installedPath -Destination $toolPath -Force
+            }
+
+            [System.IO.File]::WriteAllText($versionPath, "$desiredVersion`n")
+          '

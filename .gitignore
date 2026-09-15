@@ -127,3 +127,6 @@ charts/*.tgz
 
 # Repository-local Go verification caches
 .cache/
+
+# Task-managed build tools
+/bin/
