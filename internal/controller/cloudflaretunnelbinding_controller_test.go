@@ -18,13 +18,20 @@ package controller
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"testing"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -126,6 +133,92 @@ func TestBindingDeprogramsTunnelWhenItLosesEligibility(t *testing.T) {
 	if cloudflare.updateCalls != 1 || len(cloudflare.configuration) != 1 || cloudflare.configuration[0].Service != "http_status:404" {
 		t.Fatalf("tunnel was not safely deprogrammed: %#v", cloudflare.configuration)
 	}
+}
+
+func TestBindingFinalizationHonorsDeletionPolicy(t *testing.T) {
+	tests := []struct {
+		name            string
+		deletionPolicy  kflaredv1alpha1.DeletionPolicy
+		wantDeleteCalls int
+		wantTunnel      bool
+	}{
+		{name: "delete", deletionPolicy: kflaredv1alpha1.DeletionPolicyDelete, wantDeleteCalls: 1},
+		{name: "retain", deletionPolicy: kflaredv1alpha1.DeletionPolicyRetain, wantTunnel: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := bindingTestScheme(t)
+			objects, binding := finalizingBindingObjects(tt.deletionPolicy)
+			kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}).
+				WithObjects(objects...).Build()
+			cloudflare := &fakeCloudflareClient{tunnel: &cfclient.Tunnel{ID: binding.Status.TunnelID, Name: "binding-tunnel"}}
+			reconciler := &CloudflareTunnelBindingReconciler{
+				Client:     kubeClient,
+				Scheme:     scheme,
+				RESTMapper: bindingTestRESTMapper(),
+				Cloudflare: fakeCloudflareFactory{client: cloudflare},
+			}
+			request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: binding.Namespace, Name: binding.Name}}
+
+			if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+				t.Fatalf("finalize binding: %v", err)
+			}
+			if cloudflare.deleteCalls != tt.wantDeleteCalls {
+				t.Fatalf("DeleteTunnel calls = %d, want %d", cloudflare.deleteCalls, tt.wantDeleteCalls)
+			}
+			if got := cloudflare.tunnel != nil; got != tt.wantTunnel {
+				t.Fatalf("remote tunnel present = %t, want %t", got, tt.wantTunnel)
+			}
+			assertFinalizationResourcesDeleted(t, kubeClient, binding)
+			assertBindingFinalized(t, kubeClient, request.NamespacedName)
+		})
+	}
+}
+
+func TestBindingFinalizationRetriesRemoteTunnelDeletion(t *testing.T) {
+	scheme := bindingTestScheme(t)
+	objects, binding := finalizingBindingObjects(kflaredv1alpha1.DeletionPolicyDelete)
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}).
+		WithObjects(objects...).Build()
+	deleteErr := errors.New("remote deletion failed")
+	cloudflare := &fakeCloudflareClient{
+		deleteErr: deleteErr,
+		tunnel:    &cfclient.Tunnel{ID: binding.Status.TunnelID, Name: "binding-tunnel"},
+	}
+	reconciler := &CloudflareTunnelBindingReconciler{
+		Client:     kubeClient,
+		Scheme:     scheme,
+		RESTMapper: bindingTestRESTMapper(),
+		Cloudflare: fakeCloudflareFactory{client: cloudflare},
+	}
+	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: binding.Namespace, Name: binding.Name}}
+
+	if _, err := reconciler.Reconcile(context.Background(), request); !errors.Is(err, deleteErr) {
+		t.Fatalf("first finalization error = %v, want %v", err, deleteErr)
+	}
+	if cloudflare.deleteCalls != 1 {
+		t.Fatalf("DeleteTunnel calls after failure = %d, want 1", cloudflare.deleteCalls)
+	}
+	if cloudflare.tunnel == nil {
+		t.Fatal("failed remote deletion removed the fake tunnel")
+	}
+	assertFinalizationResourcesDeleted(t, kubeClient, binding)
+	assertBindingFinalizerPresent(t, kubeClient, request.NamespacedName)
+
+	cloudflare.deleteErr = nil
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("retry finalization: %v", err)
+	}
+	if cloudflare.deleteCalls != 2 {
+		t.Fatalf("DeleteTunnel calls after retry = %d, want 2", cloudflare.deleteCalls)
+	}
+	if cloudflare.tunnel != nil {
+		t.Fatal("successful remote deletion retained the fake tunnel")
+	}
+	assertFinalizationResourcesDeleted(t, kubeClient, binding)
+	assertBindingFinalized(t, kubeClient, request.NamespacedName)
 }
 
 func TestConnectorReplicasClampedToSupportedRange(t *testing.T) {
@@ -230,6 +323,83 @@ func bindingTestScheme(t *testing.T) *runtime.Scheme {
 		}
 	}
 	return scheme
+}
+
+func bindingTestRESTMapper() apiMeta.RESTMapper {
+	groupVersion := schema.GroupVersion{Group: "externaldns.k8s.io", Version: "v1alpha1"}
+	mapper := apiMeta.NewDefaultRESTMapper([]schema.GroupVersion{groupVersion})
+	mapper.Add(groupVersion.WithKind(dnsEndpointKind), apiMeta.RESTScopeNamespace)
+	return mapper
+}
+
+func finalizingBindingObjects(deletionPolicy kflaredv1alpha1.DeletionPolicy) ([]client.Object, *kflaredv1alpha1.CloudflareTunnelBinding) {
+	objects, binding := validBindingObjects()
+	deletionTimestamp := metav1.NewTime(time.Unix(200, 0))
+	binding.DeletionTimestamp = &deletionTimestamp
+	binding.Finalizers = []string{bindingFinalizer}
+	binding.Spec.DeletionPolicy = deletionPolicy
+	binding.Status.TunnelID = "tunnel-id"
+
+	resourceName := connectorResourceName(binding.UID)
+	endpoint := &unstructured.Unstructured{}
+	endpoint.SetAPIVersion(dnsEndpointAPIVersion)
+	endpoint.SetKind(dnsEndpointKind)
+	endpoint.SetName(resourceName)
+	endpoint.SetNamespace(binding.Namespace)
+	return append(objects,
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: defaultSystemNamespace}},
+		&policyv1.PodDisruptionBudget{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: defaultSystemNamespace}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: defaultSystemNamespace}},
+		endpoint,
+	), binding
+}
+
+func assertFinalizationResourcesDeleted(t *testing.T, kubeClient client.Client, binding *kflaredv1alpha1.CloudflareTunnelBinding) {
+	t.Helper()
+	resourceName := connectorResourceName(binding.UID)
+	endpoint := &unstructured.Unstructured{}
+	endpoint.SetAPIVersion(dnsEndpointAPIVersion)
+	endpoint.SetKind(dnsEndpointKind)
+	objects := []client.Object{
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: defaultSystemNamespace}},
+		&policyv1.PodDisruptionBudget{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: defaultSystemNamespace}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: defaultSystemNamespace}},
+		endpoint,
+	}
+	objects[3].SetName(resourceName)
+	objects[3].SetNamespace(binding.Namespace)
+	for _, object := range objects {
+		err := kubeClient.Get(context.Background(), client.ObjectKeyFromObject(object), object)
+		if !apierrors.IsNotFound(err) {
+			t.Errorf("get deleted %T %s/%s: got error %v, want NotFound", object, object.GetNamespace(), object.GetName(), err)
+		}
+	}
+}
+
+func assertBindingFinalizerPresent(t *testing.T, kubeClient client.Client, key types.NamespacedName) {
+	t.Helper()
+	binding := &kflaredv1alpha1.CloudflareTunnelBinding{}
+	if err := kubeClient.Get(context.Background(), key, binding); err != nil {
+		t.Fatalf("get binding after failed finalization: %v", err)
+	}
+	if !slices.Contains(binding.Finalizers, bindingFinalizer) {
+		t.Fatalf("binding finalizers after failed finalization = %v, want %q", binding.Finalizers, bindingFinalizer)
+	}
+}
+
+func assertBindingFinalized(t *testing.T, kubeClient client.Client, key types.NamespacedName) {
+	t.Helper()
+	binding := &kflaredv1alpha1.CloudflareTunnelBinding{}
+	err := kubeClient.Get(context.Background(), key, binding)
+	if apierrors.IsNotFound(err) {
+		return
+	}
+	if err != nil {
+		t.Fatalf("get finalized binding: %v", err)
+	}
+	if slices.Contains(binding.Finalizers, bindingFinalizer) {
+		t.Fatalf("binding finalizers after successful finalization = %v, do not want %q", binding.Finalizers, bindingFinalizer)
+	}
 }
 
 func validBindingObjects() ([]client.Object, *kflaredv1alpha1.CloudflareTunnelBinding) {

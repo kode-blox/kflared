@@ -34,6 +34,7 @@ func (f fakeCloudflareFactory) New(_, _ string) cfclient.Client { return f.clien
 
 type fakeCloudflareClient struct {
 	validateErr   error
+	deleteErr     error
 	tunnel        *cfclient.Tunnel
 	configuration []cfclient.IngressRule
 	token         string
@@ -81,6 +82,9 @@ func (f *fakeCloudflareClient) GetToken(context.Context, string) (string, error)
 
 func (f *fakeCloudflareClient) DeleteTunnel(context.Context, string) error {
 	f.deleteCalls++
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
 	f.tunnel = nil
 	return nil
 }
