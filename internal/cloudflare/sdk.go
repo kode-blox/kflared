@@ -47,6 +47,9 @@ func (c *sdkClient) Validate(ctx context.Context) error {
 		PerPage:   cfapi.F(1.0),
 		IsDeleted: cfapi.F(false),
 	})
+	if isCredentialRejection(err) {
+		return errors.Join(ErrCredentialsRejected, err)
+	}
 	return err
 }
 
@@ -154,4 +157,9 @@ func (c *sdkClient) DeleteTunnel(ctx context.Context, id string) error {
 func isNotFound(err error) bool {
 	var apiErr *cfapi.Error
 	return errors.As(err, &apiErr) && apiErr.StatusCode == 404
+}
+
+func isCredentialRejection(err error) bool {
+	var apiErr *cfapi.Error
+	return errors.As(err, &apiErr) && (apiErr.StatusCode == 401 || apiErr.StatusCode == 403)
 }

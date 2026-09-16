@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -104,12 +105,20 @@ func (r *CloudflareProviderReconciler) Reconcile(ctx context.Context, req ctrl.R
 		setCondition(&provider.Status.Conditions, provider.Generation, kflaredv1alpha1.ProviderConditionCredentialsValid, metav1.ConditionFalse, "TokenMissing", "The configured Secret key is missing or empty")
 		return ctrl.Result{RequeueAfter: time.Minute}, r.Status().Patch(ctx, provider, client.MergeFrom(statusBase))
 	}
-	if err := r.cloudflare().New(token, provider.Spec.AccountID).Validate(ctx); err != nil {
-		setCondition(&provider.Status.Conditions, provider.Generation, kflaredv1alpha1.ProviderConditionCredentialsValid, metav1.ConditionFalse, "CloudflareAPIRejected", "Cloudflare rejected the configured credentials")
-		if patchErr := r.Status().Patch(ctx, provider, client.MergeFrom(statusBase)); patchErr != nil {
-			return ctrl.Result{}, patchErr
+	if validationErr := r.cloudflare().New(token, provider.Spec.AccountID).Validate(ctx); validationErr != nil {
+		status := metav1.ConditionUnknown
+		reason := "CloudflareAPIUnavailable"
+		message := "Cloudflare credentials could not be checked"
+		if cfclient.IsCredentialRejected(validationErr) {
+			status = metav1.ConditionFalse
+			reason = "CloudflareAPIRejected"
+			message = "Cloudflare rejected the configured credentials"
 		}
-		return ctrl.Result{}, err
+		setCondition(&provider.Status.Conditions, provider.Generation, kflaredv1alpha1.ProviderConditionCredentialsValid, status, reason, message)
+		if patchErr := r.Status().Patch(ctx, provider, client.MergeFrom(statusBase)); patchErr != nil {
+			return ctrl.Result{}, errors.Join(validationErr, patchErr)
+		}
+		return ctrl.Result{}, validationErr
 	}
 	setCondition(&provider.Status.Conditions, provider.Generation, kflaredv1alpha1.ProviderConditionCredentialsValid, metav1.ConditionTrue, "CredentialsValid", "Cloudflare accepted the configured credentials")
 	return ctrl.Result{RequeueAfter: 10 * time.Minute}, r.Status().Patch(ctx, provider, client.MergeFrom(statusBase))

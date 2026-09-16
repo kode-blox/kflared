@@ -18,17 +18,22 @@ package controller
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	kflaredv1alpha1 "github.com/kode-blox/kflared/api/v1alpha1"
+	cfclient "github.com/kode-blox/kflared/internal/cloudflare"
 )
 
 func TestProviderReconcileValidatesCredentials(t *testing.T) {
@@ -67,4 +72,120 @@ func TestProviderReconcileValidatesCredentials(t *testing.T) {
 	if !conditionTrue(actual.Status.Conditions, actual.Generation, kflaredv1alpha1.ProviderConditionCredentialsValid) {
 		t.Fatalf("provider CredentialsValid condition is not true: %#v", actual.Status.Conditions)
 	}
+}
+
+func TestProviderReconcileClassifiesCredentialValidationFailures(t *testing.T) {
+	tests := []struct {
+		name       string
+		validation func(error) error
+		wantStatus metav1.ConditionStatus
+		wantReason string
+	}{
+		{
+			name: "confirmed rejection",
+			validation: func(cause error) error {
+				return errors.Join(cfclient.ErrCredentialsRejected, cause)
+			},
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "CloudflareAPIRejected",
+		},
+		{
+			name:       "transient API failure",
+			validation: func(cause error) error { return cause },
+			wantStatus: metav1.ConditionUnknown,
+			wantReason: "CloudflareAPIUnavailable",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := providerTestScheme(t)
+			provider := readyProvider()
+			provider.Finalizers = []string{providerFinalizer}
+			secret := providerTestSecret()
+			kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(provider).WithObjects(provider, secret).Build()
+			validationCause := errors.New("sensitive validation response body")
+			validationErr := tt.validation(validationCause)
+			reconciler := &CloudflareProviderReconciler{
+				Client:     kubeClient,
+				Scheme:     scheme,
+				Cloudflare: fakeCloudflareFactory{client: &fakeCloudflareClient{validateErr: validationErr}},
+			}
+			request := ctrl.Request{NamespacedName: types.NamespacedName{Name: provider.Name}}
+
+			if _, err := reconciler.Reconcile(context.Background(), request); !errors.Is(err, validationCause) {
+				t.Fatalf("Reconcile() error = %v, want preserved validation error", err)
+			}
+
+			actual := &kflaredv1alpha1.CloudflareProvider{}
+			if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
+				t.Fatal(err)
+			}
+			condition := apiMeta.FindStatusCondition(actual.Status.Conditions, kflaredv1alpha1.ProviderConditionCredentialsValid)
+			if condition == nil {
+				t.Fatal("CredentialsValid condition is missing")
+			}
+			if condition.Status != tt.wantStatus || condition.Reason != tt.wantReason {
+				t.Errorf("CredentialsValid = %s/%s, want %s/%s", condition.Status, condition.Reason, tt.wantStatus, tt.wantReason)
+			}
+			if strings.Contains(condition.Message, "sensitive") {
+				t.Errorf("CredentialsValid message leaked validation details: %q", condition.Message)
+			}
+		})
+	}
+}
+
+func TestProviderReconcilePreservesValidationAndStatusPatchErrors(t *testing.T) {
+	scheme := providerTestScheme(t)
+	provider := readyProvider()
+	provider.Finalizers = []string{providerFinalizer}
+	baseClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(provider).WithObjects(provider, providerTestSecret()).Build()
+	validationErr := errors.New("validation failed")
+	patchErr := errors.New("status patch failed")
+	reconciler := &CloudflareProviderReconciler{
+		Client:     statusPatchFailingClient{Client: baseClient, err: patchErr},
+		Scheme:     scheme,
+		Cloudflare: fakeCloudflareFactory{client: &fakeCloudflareClient{validateErr: validationErr}},
+	}
+
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: provider.Name}})
+	if !errors.Is(err, validationErr) || !errors.Is(err, patchErr) {
+		t.Fatalf("Reconcile() error = %v, want both validation and patch errors", err)
+	}
+}
+
+func providerTestScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := kflaredv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	return scheme
+}
+
+func providerTestSecret() *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-api-token", Namespace: defaultSystemNamespace},
+		Data:       map[string][]byte{"api-token": []byte("secret-token")},
+	}
+}
+
+type statusPatchFailingClient struct {
+	client.Client
+	err error
+}
+
+func (c statusPatchFailingClient) Status() client.SubResourceWriter {
+	return statusPatchFailingWriter{SubResourceWriter: c.Client.Status(), err: c.err}
+}
+
+type statusPatchFailingWriter struct {
+	client.SubResourceWriter
+	err error
+}
+
+func (w statusPatchFailingWriter) Patch(context.Context, client.Object, client.Patch, ...client.SubResourcePatchOption) error {
+	return w.err
 }

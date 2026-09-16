@@ -18,9 +18,22 @@ limitations under the License.
 // credentials out of Kubernetes reconciliation data structures.
 package cloudflare
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 const ConfigSourceCloudflare = "cloudflare"
+
+// ErrCredentialsRejected marks a validation failure that conclusively proves
+// Cloudflare rejected the configured credentials.
+var ErrCredentialsRejected = errors.New("cloudflare credentials rejected")
+
+// IsCredentialRejected reports whether validation conclusively proved that
+// Cloudflare rejected the configured credentials.
+func IsCredentialRejected(err error) bool {
+	return errors.Is(err, ErrCredentialsRejected)
+}
 
 // Tunnel is the external state needed by the reconciler.
 type Tunnel struct {

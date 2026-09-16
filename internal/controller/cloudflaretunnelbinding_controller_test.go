@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -132,6 +133,114 @@ func TestBindingDeprogramsTunnelWhenItLosesEligibility(t *testing.T) {
 	}
 	if cloudflare.updateCalls != 1 || len(cloudflare.configuration) != 1 || cloudflare.configuration[0].Service != "http_status:404" {
 		t.Fatalf("tunnel was not safely deprogrammed: %#v", cloudflare.configuration)
+	}
+}
+
+func TestBindingRejectsCurrentProviderFailure(t *testing.T) {
+	tests := []struct {
+		name          string
+		conditionType string
+	}{
+		{name: "invalid provider configuration", conditionType: kflaredv1alpha1.ProviderConditionAccepted},
+		{name: "rejected provider credentials", conditionType: kflaredv1alpha1.ProviderConditionCredentialsValid},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := bindingTestScheme(t)
+			objects, binding := validBindingObjects()
+			setPublishedBindingStatus(binding)
+			provider := bindingTestProvider(t, objects)
+			condition := apiMeta.FindStatusCondition(provider.Status.Conditions, tt.conditionType)
+			if condition == nil {
+				t.Fatalf("provider condition %q is missing", tt.conditionType)
+			}
+			condition.Status = metav1.ConditionFalse
+			kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.CloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}).
+				WithObjects(objects...).Build()
+			cloudflare := &fakeCloudflareClient{
+				tunnel:        &cfclient.Tunnel{ID: binding.Status.TunnelID, Name: binding.Status.TunnelName, ConfigSource: cfclient.ConfigSourceCloudflare},
+				configuration: []cfclient.IngressRule{{Hostname: "app.example.com", Service: "http://old"}, {Service: "http_status:404"}},
+			}
+			reconciler := &CloudflareTunnelBindingReconciler{Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: cloudflare}}
+			request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: binding.Namespace, Name: binding.Name}}
+
+			if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+				t.Fatalf("reject binding: %v", err)
+			}
+			if cloudflare.updateCalls != 1 || len(cloudflare.configuration) != 1 || cloudflare.configuration[0].Service != "http_status:404" {
+				t.Fatalf("confirmed provider failure did not deprogram the tunnel: %#v", cloudflare.configuration)
+			}
+		})
+	}
+}
+
+func TestBindingPreservesWorkingTunnelWhileProviderCredentialsAreIndeterminate(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*kflaredv1alpha1.CloudflareProvider)
+	}{
+		{
+			name: "unknown",
+			mutate: func(provider *kflaredv1alpha1.CloudflareProvider) {
+				apiMeta.FindStatusCondition(provider.Status.Conditions, kflaredv1alpha1.ProviderConditionCredentialsValid).Status = metav1.ConditionUnknown
+			},
+		},
+		{
+			name: "stale",
+			mutate: func(provider *kflaredv1alpha1.CloudflareProvider) {
+				apiMeta.FindStatusCondition(provider.Status.Conditions, kflaredv1alpha1.ProviderConditionCredentialsValid).ObservedGeneration = provider.Generation - 1
+			},
+		},
+		{
+			name: "missing",
+			mutate: func(provider *kflaredv1alpha1.CloudflareProvider) {
+				provider.Status.Conditions = slices.DeleteFunc(provider.Status.Conditions, func(condition metav1.Condition) bool {
+					return condition.Type == kflaredv1alpha1.ProviderConditionCredentialsValid
+				})
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := bindingTestScheme(t)
+			objects, binding := validBindingObjects()
+			setPublishedBindingStatus(binding)
+			tt.mutate(bindingTestProvider(t, objects))
+			expectedStatus := binding.DeepCopy().Status
+			initialConfiguration := []cfclient.IngressRule{{Hostname: "app.example.com", Service: "http://old"}, {Service: "http_status:404"}}
+			kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.CloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}).
+				WithObjects(objects...).Build()
+			cloudflare := &fakeCloudflareClient{
+				tunnel:        &cfclient.Tunnel{ID: binding.Status.TunnelID, Name: binding.Status.TunnelName, ConfigSource: cfclient.ConfigSourceCloudflare},
+				configuration: slices.Clone(initialConfiguration),
+			}
+			reconciler := &CloudflareTunnelBindingReconciler{Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: cloudflare}}
+			request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: binding.Namespace, Name: binding.Name}}
+
+			result, err := reconciler.Reconcile(context.Background(), request)
+			if err == nil {
+				t.Fatal("Reconcile() error = nil, want operational provider readiness error")
+			}
+			if result != (ctrl.Result{}) {
+				t.Errorf("Reconcile() result = %#v, want zero result", result)
+			}
+			if cloudflare.updateCalls != 0 {
+				t.Fatalf("UpdateConfiguration calls = %d, want 0", cloudflare.updateCalls)
+			}
+			if !reflect.DeepEqual(cloudflare.configuration, initialConfiguration) {
+				t.Fatalf("Cloudflare configuration changed: %#v", cloudflare.configuration)
+			}
+
+			actual := &kflaredv1alpha1.CloudflareTunnelBinding{}
+			if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(actual.Status, expectedStatus) {
+				t.Fatalf("binding status changed while provider readiness was indeterminate:\n got: %#v\nwant: %#v", actual.Status, expectedStatus)
+			}
+		})
 	}
 }
 
@@ -330,6 +439,44 @@ func bindingTestRESTMapper() apiMeta.RESTMapper {
 	mapper := apiMeta.NewDefaultRESTMapper([]schema.GroupVersion{groupVersion})
 	mapper.Add(groupVersion.WithKind(dnsEndpointKind), apiMeta.RESTScopeNamespace)
 	return mapper
+}
+
+func bindingTestProvider(t *testing.T, objects []client.Object) *kflaredv1alpha1.CloudflareProvider {
+	t.Helper()
+	for _, object := range objects {
+		if provider, ok := object.(*kflaredv1alpha1.CloudflareProvider); ok {
+			return provider
+		}
+	}
+	t.Fatal("test objects do not contain a CloudflareProvider")
+	return nil
+}
+
+func setPublishedBindingStatus(binding *kflaredv1alpha1.CloudflareTunnelBinding) {
+	binding.Finalizers = []string{bindingFinalizer}
+	binding.Status = kflaredv1alpha1.CloudflareTunnelBindingStatus{
+		ObservedGeneration: binding.Generation,
+		TunnelID:           "tunnel-id",
+		TunnelName:         "binding-tunnel",
+		TunnelCNAME:        "tunnel-id.cfargotunnel.com",
+		PublishedHostnames: []string{"app.example.com"},
+		DNSRecords: []kflaredv1alpha1.DNSRecord{{
+			Hostname: "app.example.com",
+			Type:     "CNAME",
+			Target:   "tunnel-id.cfargotunnel.com",
+		}},
+		Resources: kflaredv1alpha1.ConnectorResourceNames{
+			Deployment:          "kflared-111111112222",
+			PodDisruptionBudget: "kflared-111111112222",
+			Secret:              "kflared-111111112222",
+			DNSEndpoint:         "kflared-111111112222",
+		},
+		Conditions: []metav1.Condition{
+			currentCondition(kflaredv1alpha1.BindingConditionAccepted, metav1.ConditionTrue),
+			currentCondition(kflaredv1alpha1.BindingConditionProgrammed, metav1.ConditionTrue),
+			currentCondition(kflaredv1alpha1.BindingConditionReady, metav1.ConditionTrue),
+		},
+	}
 }
 
 func finalizingBindingObjects(deletionPolicy kflaredv1alpha1.DeletionPolicy) ([]client.Object, *kflaredv1alpha1.CloudflareTunnelBinding) {

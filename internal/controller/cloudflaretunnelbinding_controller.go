@@ -171,9 +171,17 @@ func (r *CloudflareTunnelBindingReconciler) validateAndPlan(ctx context.Context,
 	if err := r.Get(ctx, types.NamespacedName{Name: binding.Spec.ProviderRef.Name}, provider); err != nil {
 		return r.rejected(ctx, binding, "ProviderNotFound", "The referenced CloudflareProvider was not found", client.IgnoreNotFound(err))
 	}
-	if !conditionTrue(provider.Status.Conditions, provider.Generation, kflaredv1alpha1.ProviderConditionAccepted) ||
-		!conditionTrue(provider.Status.Conditions, provider.Generation, kflaredv1alpha1.ProviderConditionCredentialsValid) {
+	accepted := apiMeta.FindStatusCondition(provider.Status.Conditions, kflaredv1alpha1.ProviderConditionAccepted)
+	credentialsValid := apiMeta.FindStatusCondition(provider.Status.Conditions, kflaredv1alpha1.ProviderConditionCredentialsValid)
+	acceptedCurrent := accepted != nil && accepted.ObservedGeneration == provider.Generation
+	credentialsCurrent := credentialsValid != nil && credentialsValid.ObservedGeneration == provider.Generation
+	if (acceptedCurrent && accepted.Status == metav1.ConditionFalse) ||
+		(credentialsCurrent && credentialsValid.Status == metav1.ConditionFalse) {
 		return r.rejected(ctx, binding, "ProviderNotReady", "The referenced CloudflareProvider is not ready", nil)
+	}
+	if !acceptedCurrent || accepted.Status != metav1.ConditionTrue ||
+		!credentialsCurrent || credentialsValid.Status != metav1.ConditionTrue {
+		return nil, nil, "", nil, fmt.Errorf("CloudflareProvider %q readiness is not currently known", provider.Name)
 	}
 	namespace := &corev1.Namespace{}
 	if err := r.Get(ctx, types.NamespacedName{Name: binding.Namespace}, namespace); err != nil {
