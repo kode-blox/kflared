@@ -1,0 +1,164 @@
+name: Manual Production Delivery
+
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: Production component to deliver from the selected ref
+        required: true
+        type: choice
+        options:
+          - application
+          - chart
+          - both
+      deploy:
+        description: Deploy the prepared artifacts to production
+        required: false
+        default: true
+        type: boolean
+
+permissions: {}
+
+jobs:
+  resolve-production-inputs:
+    name: Resolve Production Inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      source-digest: ${{ steps.application-artifact.outputs.image-digest }}
+      application-version: ${{ steps.versions.outputs.application-version }}
+      chart-version: ${{ steps.versions.outputs.chart-version }}
+
+    steps:
+      - name: Check out selected ref
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate release versions
+        uses: SayakMukhopadhyay/github-actions/check-version@v1
+        with:
+          working-directory: .
+          helm: 'true'
+
+      - id: versions
+        name: Read production versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            printf 'application-version=%s\n' "$(<VERSION)"
+            printf 'chart-version=%s\n' "$(<charts/VERSION)"
+          } >> "$GITHUB_OUTPUT"
+
+      - id: application-artifact
+        name: Inspect development image
+        if: inputs.component == 'application' || inputs.component == 'both'
+        uses: SayakMukhopadhyay/github-actions/container-image-inspect@v1
+        with:
+          tag: build-${{ github.sha }}
+          registry: ghcr.io
+          image-repository: ${{ github.repository }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Require development image
+        if: (inputs.component == 'application' || inputs.component == 'both') && steps.application-artifact.outputs.exists != 'true'
+        shell: pwsh
+        run: |
+          Write-Output '::error::Required development image build-${{ github.sha }} does not exist in GHCR.'
+          exit 1
+
+      - id: application-tag-exists
+        name: Check application release tag
+        if: inputs.component == 'application' || inputs.component == 'both'
+        uses: SayakMukhopadhyay/github-actions/release-tags@v1
+        with:
+          token: ${{ github.token }}
+          tags: v${{ steps.versions.outputs.application-version }}
+          mode: exists
+
+      - id: application-tag-verify
+        name: Verify existing application release tag
+        if: (inputs.component == 'application' || inputs.component == 'both') && steps.application-tag-exists.outputs.tags-exist == 'true'
+        uses: SayakMukhopadhyay/github-actions/release-tags@v1
+        with:
+          token: ${{ github.token }}
+          tags: v${{ steps.versions.outputs.application-version }}
+          mode: verify
+
+      - name: Reject a conflicting application release tag
+        if: (inputs.component == 'application' || inputs.component == 'both') && steps.application-tag-exists.outputs.tags-exist == 'true' && steps.application-tag-verify.outputs.tags-match != 'true'
+        env:
+          APPLICATION_VERSION: ${{ steps.versions.outputs.application-version }}
+        shell: bash
+        run: |
+          printf '::error::Application version %s is already tagged at another commit. Choose a new version before manually delivering production.\n' \
+            "$APPLICATION_VERSION"
+          exit 1
+
+      - id: chart-tag-exists
+        name: Check chart release tag
+        if: inputs.component == 'chart' || inputs.component == 'both'
+        uses: SayakMukhopadhyay/github-actions/release-tags@v1
+        with:
+          token: ${{ github.token }}
+          tags: chart-v${{ steps.versions.outputs.chart-version }}
+          mode: exists
+
+      - id: chart-tag-verify
+        name: Verify existing chart release tag
+        if: (inputs.component == 'chart' || inputs.component == 'both') && steps.chart-tag-exists.outputs.tags-exist == 'true'
+        uses: SayakMukhopadhyay/github-actions/release-tags@v1
+        with:
+          token: ${{ github.token }}
+          tags: chart-v${{ steps.versions.outputs.chart-version }}
+          mode: verify
+
+      - name: Reject a conflicting chart release tag
+        if: (inputs.component == 'chart' || inputs.component == 'both') && steps.chart-tag-exists.outputs.tags-exist == 'true' && steps.chart-tag-verify.outputs.tags-match != 'true'
+        env:
+          CHART_VERSION: ${{ steps.versions.outputs.chart-version }}
+        shell: bash
+        run: |
+          printf '::error::Chart version %s is already tagged at another commit. Choose a new version before manually delivering production.\n' \
+            "$CHART_VERSION"
+          exit 1
+
+  deliver-production:
+    name: Deliver Production
+    needs:
+      - resolve-production-inputs
+    permissions:
+      contents: read
+      packages: write
+    uses: $/.github/workflows/deliver-production.yaml
+    with:
+      source-digest: ${{ needs.resolve-production-inputs.outputs.source-digest }}
+      deliver-application: ${{ inputs.component == 'application' || inputs.component == 'both' }}
+      deliver-chart: ${{ inputs.component == 'chart' || inputs.component == 'both' }}
+      application-version: ${{ needs.resolve-production-inputs.outputs.application-version }}
+      chart-version: ${{ needs.resolve-production-inputs.outputs.chart-version }}
+      deploy: ${{ inputs.deploy }}
+    secrets:
+      GITOPS_APP_PRIVATE_KEY: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
+
+  release-records:
+    name: Create Release Records
+    needs:
+      - resolve-production-inputs
+      - deliver-production
+    permissions:
+      contents: write
+      id-token: write
+    uses: $/.github/workflows/create-release-records.yaml
+    with:
+      application-release-needed: ${{ inputs.component == 'application' || inputs.component == 'both' }}
+      chart-release-needed: ${{ inputs.component == 'chart' || inputs.component == 'both' }}
+      application-version: ${{ needs.resolve-production-inputs.outputs.application-version }}
+      chart-version: ${{ needs.resolve-production-inputs.outputs.chart-version }}

@@ -1,0 +1,99 @@
+name: Detect Delivery Changes
+
+on:
+  workflow_call:
+    outputs:
+      application-changed:
+        description: Whether application files changed in the selected event range
+        value: ${{ jobs.detect-changes.outputs.application-changed }}
+      chart-changed:
+        description: Whether chart files changed in the selected event range
+        value: ${{ jobs.detect-changes.outputs.chart-changed }}
+      documentation-changed:
+        description: Whether documentation files changed in the selected event range
+        value: ${{ jobs.detect-changes.outputs.documentation-changed }}
+      application-release-requested:
+        description: Whether the root VERSION changed in the selected event range
+        value: ${{ jobs.detect-changes.outputs.application-release-requested }}
+      chart-release-requested:
+        description: Whether charts/VERSION changed in the selected event range
+        value: ${{ jobs.detect-changes.outputs.chart-release-requested }}
+
+permissions: {}
+
+jobs:
+  detect-changes:
+    name: Detect delivery changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      application-changed: ${{ steps.application.outputs.changed == 'true' }}
+      chart-changed: ${{ steps.chart.outputs.changed == 'true' }}
+      documentation-changed: ${{ steps.documentation.outputs.changed == 'true' }}
+      application-release-requested: ${{ steps.application-release.outputs.changed == 'true' }}
+      chart-release-requested: ${{ steps.chart-release.outputs.changed == 'true' }}
+
+    steps:
+      - name: Checkout event commit history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          fetch-tags: false
+          persist-credentials: false
+          sparse-checkout: |
+            .github/workflows/detect-delivery-changes.yaml
+            .github/scripts/Resolve-DeliveryEventRange.ps1
+          sparse-checkout-cone-mode: false
+
+      - id: event-range
+        name: Resolve event range
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SELECTED_SHA: ${{ github.sha }}
+        run: ./.github/scripts/Resolve-DeliveryEventRange.ps1
+
+      - id: application
+        name: Detect application changes
+        uses: SayakMukhopadhyay/github-actions/is-file-changed@v1
+        with:
+          base-ref: ${{ steps.event-range.outputs.base-ref }}
+          head-ref: ${{ steps.event-range.outputs.head-ref }}
+          pattern: '^(?:Dockerfile|\.dockerignore|go\.mod|go\.sum|VERSION|api/.+|cmd/.+|internal/.+)$'
+
+      - id: chart
+        name: Detect chart changes
+        uses: SayakMukhopadhyay/github-actions/is-file-changed@v1
+        with:
+          base-ref: ${{ steps.event-range.outputs.base-ref }}
+          head-ref: ${{ steps.event-range.outputs.head-ref }}
+          pattern: '^charts/.+$'
+
+      - id: documentation
+        name: Detect documentation changes
+        uses: SayakMukhopadhyay/github-actions/is-file-changed@v1
+        with:
+          base-ref: ${{ steps.event-range.outputs.base-ref }}
+          head-ref: ${{ steps.event-range.outputs.head-ref }}
+          pattern: '^(?:\.github/workflows/deliver-documentation\.yaml|\.nvmrc|docs/.+|package-lock\.json|package\.json)$'
+
+      - id: application-release
+        name: Detect application release request
+        uses: SayakMukhopadhyay/github-actions/is-file-changed@v1
+        with:
+          base-ref: ${{ steps.event-range.outputs.base-ref }}
+          head-ref: ${{ steps.event-range.outputs.head-ref }}
+          pattern: '^VERSION$'
+
+      - id: chart-release
+        name: Detect chart release request
+        uses: SayakMukhopadhyay/github-actions/is-file-changed@v1
+        with:
+          base-ref: ${{ steps.event-range.outputs.base-ref }}
+          head-ref: ${{ steps.event-range.outputs.head-ref }}
+          pattern: '^charts/VERSION$'

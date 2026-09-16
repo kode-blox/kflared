@@ -1,0 +1,77 @@
+name: Bump Version
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Version authorities to increment
+        required: true
+        type: choice
+        default: both
+        options:
+          - application
+          - chart
+          - both
+      increment:
+        description: Semantic version component to increment
+        required: true
+        type: choice
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  bump-version:
+    name: Bump version
+    if: github.ref_name == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: {}
+
+    steps:
+      - id: application-token
+        name: Create application repository installation token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GITOPS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: kflared
+          permission-contents: write
+
+      - name: Bump application version
+        if: inputs.target == 'application'
+        uses: SayakMukhopadhyay/github-actions/bump-version@v1
+        with:
+          token: ${{ steps.application-token.outputs.token }}
+          increment: ${{ inputs.increment }}
+          working-directory: .
+          go: 'true'
+          helm: 'false'
+
+      - name: Bump chart version
+        if: inputs.target == 'chart'
+        uses: SayakMukhopadhyay/github-actions/bump-version@v1
+        with:
+          token: ${{ steps.application-token.outputs.token }}
+          increment: ${{ inputs.increment }}
+          working-directory: .
+          go: 'false'
+          helm: 'true'
+
+      - name: Bump application and chart versions
+        if: inputs.target == 'both'
+        uses: SayakMukhopadhyay/github-actions/bump-version@v1
+        with:
+          token: ${{ steps.application-token.outputs.token }}
+          increment: ${{ inputs.increment }}
+          working-directory: .
+          go: 'true'
+          helm: 'true'

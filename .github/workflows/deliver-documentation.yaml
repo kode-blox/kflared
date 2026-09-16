@@ -1,0 +1,74 @@
+name: Deliver Documentation
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  build-documentation:
+    name: Build documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout and install Node dependencies
+        uses: SayakMukhopadhyay/github-actions/checkout-dependencies@v1
+        with:
+          node-version-file: .nvmrc
+
+      - name: Lint documentation site
+        run: npm run lint --workspace @kflared/docs
+
+      - name: Check documentation types
+        run: npm run types:check --workspace @kflared/docs
+
+      - name: Build documentation site
+        run: npm run build --workspace @kflared/docs
+
+      - name: Validate generated site
+        uses: SayakMukhopadhyay/github-actions/validate-static-site@v1
+        with:
+          path: docs/out
+
+      - name: Upload generated site
+        if: >-
+          github.event_name == 'push' ||
+          (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+        uses: actions/upload-artifact@v7
+        with:
+          name: site-kflared-docs
+          path: docs/out
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+
+  deploy-pages:
+    name: Deploy documentation
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    needs:
+      - build-documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs['page-url'] }}
+
+    steps:
+      - id: deployment
+        name: Deploy site
+        uses: SayakMukhopadhyay/github-actions/deploy-pages-artifact@v1
+        with:
+          github-token: ${{ github.token }}
+          source-repository: ${{ github.repository }}
+          source-run-id: ${{ github.run_id }}
+          artifact-name: site-kflared-docs

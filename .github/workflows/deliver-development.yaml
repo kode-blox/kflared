@@ -1,0 +1,60 @@
+name: Deliver Development
+
+on:
+  workflow_call:
+    inputs:
+      deliver-application:
+        description: Prepare and publish the application artifact from the current HEAD
+        required: true
+        type: boolean
+      deliver-chart:
+        description: Prepare and publish the chart artifact from the current HEAD
+        required: true
+        type: boolean
+      application-version:
+        description: Validated application version embedded in container metadata
+        required: true
+        type: string
+      deploy:
+        description: Deploy the prepared artifacts to development
+        required: false
+        default: true
+        type: boolean
+    secrets:
+      GITOPS_APP_PRIVATE_KEY:
+        description: GitHub App private key used to update the GitOps repository
+        required: true
+    outputs:
+      image-digest:
+        description: Prepared application image digest, or empty when application delivery is not selected
+        value: ${{ jobs.prepare-development.outputs.image-digest }}
+
+permissions: {}
+
+jobs:
+  prepare-development:
+    name: Prepare Development
+    permissions:
+      contents: read
+      packages: write
+    uses: $/.github/workflows/prepare-development.yaml
+    with:
+      deliver-application: ${{ inputs.deliver-application }}
+      deliver-chart: ${{ inputs.deliver-chart }}
+      application-version: ${{ inputs.application-version }}
+
+  deploy-development:
+    name: Deploy Development
+    if: inputs.deploy
+    needs:
+      - prepare-development
+    permissions:
+      packages: read
+    uses: $/.github/workflows/deploy.yaml
+    with:
+      deployment-environment: development
+      chart-name: kflared
+      chart-version: ${{ inputs.deliver-chart && needs.prepare-development.outputs.chart-version || '' }}
+      image-tag: ${{ inputs.deliver-application && needs.prepare-development.outputs.image-tag || '' }}
+    secrets:
+      GITOPS_APP_PRIVATE_KEY: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}

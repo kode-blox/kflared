@@ -1,0 +1,32 @@
+name: Validate Container
+
+on:
+  workflow_call:
+    inputs:
+      application-version:
+        description: Validated application version embedded in the container metadata
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  validate:
+    name: Validate container build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Build disposable container
+        uses: SayakMukhopadhyay/github-actions/container-build-push@v1
+        with:
+          tag: build-${{ github.sha }}
+          version: ${{ inputs.application-version }}
+          registry: ghcr.io
+          image-repository: ${{ github.repository }}
+          working-directory: .
+          build-args: |
+            COMMIT=${{ github.sha }}
+          push: 'false'

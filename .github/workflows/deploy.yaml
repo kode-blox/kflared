@@ -1,0 +1,64 @@
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      deployment-environment:
+        description: GitHub Environment selected by the pipeline
+        required: true
+        type: string
+      chart-name:
+        description: Published KFlared chart name
+        required: true
+        type: string
+      chart-version:
+        description: Optional published KFlared chart version
+        required: false
+        type: string
+        default: ""
+      image-tag:
+        description: Optional KFlared container image tag
+        required: false
+        type: string
+        default: ""
+    secrets:
+      GITOPS_APP_PRIVATE_KEY:
+        description: GitHub App private key used to update the GitOps repository
+        required: true
+
+permissions: {}
+
+jobs:
+  deploy:
+    name: Update GitOps deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: ${{ inputs.deployment-environment }}
+      url: ${{ vars.URL }}
+    permissions:
+      packages: read
+
+    steps:
+      - id: gitops-token
+        name: Create GitOps installation token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GITOPS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
+          owner: SayakMukhopadhyay
+          repositories: k8s-landscape-charts
+          permission-contents: write
+
+      - name: Update GitOps deployment state
+        uses: SayakMukhopadhyay/github-actions/chart-update-deploy@v1
+        with:
+          token: ${{ steps.gitops-token.outputs.token }}
+          environment: ${{ vars.GITOPS_ENVIRONMENT }}
+          chart-name: ${{ inputs.chart-name }}
+          chart-version: ${{ inputs.chart-version }}
+          image-tag: ${{ inputs.image-tag }}
+          dependency: ${{ inputs.chart-name }}
+          registry: ${{ inputs.chart-version != '' && 'ghcr.io' || '' }}
+          username: ${{ inputs.chart-version != '' && github.actor || '' }}
+          password: ${{ inputs.chart-version != '' && github.token || '' }}

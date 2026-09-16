@@ -1,0 +1,17 @@
+# actionlint v1.7.12 predates GitHub.com's $/ self-repository references.
+paths:
+  .github/workflows/pipeline.yaml:
+    ignore:
+      - '^reusable workflow call "\$/\.github/workflows/[a-z0-9-]+\.yaml" at "uses" is not following the format '
+  .github/workflows/deliver-development.yaml:
+    ignore:
+      - '^reusable workflow call "\$/\.github/workflows/[a-z0-9-]+\.yaml" at "uses" is not following the format '
+  .github/workflows/deliver-production.yaml:
+    ignore:
+      - '^reusable workflow call "\$/\.github/workflows/[a-z0-9-]+\.yaml" at "uses" is not following the format '
+  .github/workflows/manual-deliver-development.yaml:
+    ignore:
+      - '^reusable workflow call "\$/\.github/workflows/[a-z0-9-]+\.yaml" at "uses" is not following the format '
+  .github/workflows/manual-deliver-production.yaml:
+    ignore:
+      - '^reusable workflow call "\$/\.github/workflows/[a-z0-9-]+\.yaml" at "uses" is not following the format '

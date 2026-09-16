@@ -1,0 +1,70 @@
+name: Prepare Production
+
+on:
+  workflow_call:
+    inputs:
+      source-digest:
+        description: Published development image digest promoted without rebuilding
+        required: true
+        type: string
+      deliver-application:
+        description: Promote the application artifact to its production version
+        required: true
+        type: boolean
+      deliver-chart:
+        description: Publish the production chart artifact
+        required: true
+        type: boolean
+      application-version:
+        description: Validated plain application version
+        required: true
+        type: string
+      chart-version:
+        description: Validated plain chart version
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  promote-container:
+    name: Promote container
+    if: inputs.deliver-application
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      packages: write
+
+    steps:
+      - name: Promote published container
+        uses: SayakMukhopadhyay/github-actions/container-promote@v1
+        with:
+          source-digest: ${{ inputs.source-digest }}
+          tag: ${{ inputs.application-version }}
+          registry: ghcr.io
+          image-repository: ${{ github.repository }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+  publish-chart:
+    name: Publish chart
+    if: inputs.deliver-chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      chart-version: ${{ steps.chart.outputs.chart-version }}
+
+    steps:
+      - id: chart
+        name: Package and publish Helm chart
+        uses: SayakMukhopadhyay/github-actions/helm-package-push@v1
+        with:
+          registry: ghcr.io
+          repository: ${{ github.repository_owner }}/charts
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+          working-directory: .
+          push: "true"

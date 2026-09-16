@@ -1,0 +1,83 @@
+name: Prepare Development
+
+on:
+  workflow_call:
+    inputs:
+      deliver-application:
+        description: Publish the application from the current HEAD
+        required: true
+        type: boolean
+      deliver-chart:
+        description: Publish the chart from the current HEAD
+        required: true
+        type: boolean
+      application-version:
+        description: Validated application version embedded in container metadata
+        required: true
+        type: string
+    outputs:
+      image-tag:
+        description: Published development container tag, or empty when application delivery is not selected
+        value: ${{ jobs.publish-container.outputs.image-tag }}
+      image-digest:
+        description: Published image digest, or empty when application delivery is not selected
+        value: ${{ jobs.publish-container.outputs.image-digest }}
+      chart-version:
+        description: Published development chart version, or empty when chart delivery is not selected
+        value: ${{ jobs.publish-chart.outputs.chart-version }}
+
+permissions: {}
+
+jobs:
+  publish-container:
+    name: Publish container
+    if: inputs.deliver-application
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-tag: ${{ steps.container.outputs.image-reference != '' && format('build-{0}', github.sha) || '' }}
+      image-digest: ${{ steps.container.outputs.image-digest }}
+
+    steps:
+      - id: container
+        name: Build and publish container
+        uses: SayakMukhopadhyay/github-actions/container-build-push@v1
+        with:
+          tag: build-${{ github.sha }}
+          version: ${{ inputs.application-version }}
+          registry: ghcr.io
+          image-repository: ${{ github.repository }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+          working-directory: .
+          build-args: |
+            COMMIT=${{ github.sha }}
+          push: 'true'
+
+  publish-chart:
+    name: Publish chart
+    if: inputs.deliver-chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      chart-version: ${{ steps.chart.outputs.chart-version }}
+
+    steps:
+      - id: chart
+        name: Package and publish Helm chart
+        uses: SayakMukhopadhyay/github-actions/helm-package-push@v1
+        with:
+          development: 'true'
+          app-version: ${{ inputs.deliver-application && format('build-{0}', github.sha) || '' }}
+          registry: ghcr.io
+          repository: ${{ github.repository_owner }}/charts
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+          working-directory: .
+          push: 'true'

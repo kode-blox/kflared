@@ -1,0 +1,66 @@
+name: Deliver Production
+
+on:
+  workflow_call:
+    inputs:
+      source-digest:
+        description: Published development image digest promoted without rebuilding
+        required: true
+        type: string
+      deliver-application:
+        description: Prepare and deliver the application artifact
+        required: true
+        type: boolean
+      deliver-chart:
+        description: Prepare and deliver the chart artifact
+        required: true
+        type: boolean
+      application-version:
+        description: Validated plain application version
+        required: true
+        type: string
+      chart-version:
+        description: Validated plain chart version
+        required: true
+        type: string
+      deploy:
+        description: Deploy the prepared artifacts to production
+        required: false
+        default: true
+        type: boolean
+    secrets:
+      GITOPS_APP_PRIVATE_KEY:
+        description: GitHub App private key used to update the GitOps repository
+        required: true
+
+permissions: {}
+
+jobs:
+  prepare-production:
+    name: Prepare Production
+    permissions:
+      contents: read
+      packages: write
+    uses: $/.github/workflows/prepare-production.yaml
+    with:
+      source-digest: ${{ inputs.source-digest }}
+      deliver-application: ${{ inputs.deliver-application }}
+      deliver-chart: ${{ inputs.deliver-chart }}
+      application-version: ${{ inputs.application-version }}
+      chart-version: ${{ inputs.chart-version }}
+
+  deploy-production:
+    name: Deploy Production
+    if: inputs.deploy
+    needs:
+      - prepare-production
+    permissions:
+      packages: read
+    uses: $/.github/workflows/deploy.yaml
+    with:
+      deployment-environment: production
+      chart-name: kflared
+      chart-version: ${{ inputs.deliver-chart && inputs.chart-version || '' }}
+      image-tag: ${{ inputs.deliver-application && inputs.application-version || '' }}
+    secrets:
+      GITOPS_APP_PRIVATE_KEY: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}

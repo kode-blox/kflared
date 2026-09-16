@@ -1,0 +1,115 @@
+name: Create Release Records
+
+on:
+  workflow_call:
+    inputs:
+      application-release-needed:
+        description: Whether the application release tag is pending
+        required: true
+        type: boolean
+      chart-release-needed:
+        description: Whether the chart release tag is pending
+        required: true
+        type: boolean
+      application-version:
+        description: Validated application version from release eligibility
+        required: true
+        type: string
+      chart-version:
+        description: Validated chart version from release eligibility
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  tags:
+    name: Create release tags
+    if: inputs['application-release-needed'] || inputs['chart-release-needed']
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - id: release-tags
+        name: Select pending release tags
+        shell: bash
+        env:
+          APPLICATION_RELEASE_NEEDED: ${{ inputs['application-release-needed'] }}
+          CHART_RELEASE_NEEDED: ${{ inputs['chart-release-needed'] }}
+          APPLICATION_VERSION: ${{ inputs['application-version'] }}
+          CHART_VERSION: ${{ inputs['chart-version'] }}
+        run: |
+          set -euo pipefail
+
+          {
+            printf 'tags<<EOF\n'
+            [[ "$APPLICATION_RELEASE_NEEDED" != true ]] || printf 'v%s\n' "$APPLICATION_VERSION"
+            [[ "$CHART_RELEASE_NEEDED" != true ]] || printf 'chart-v%s\n' "$CHART_VERSION"
+            printf 'EOF\n'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create pending immutable tags
+        uses: SayakMukhopadhyay/github-actions/release-tags@v1
+        with:
+          token: ${{ github.token }}
+          tags: ${{ steps.release-tags.outputs.tags }}
+          mode: ensure
+
+  application-release:
+    name: Create application release
+    if: inputs['application-release-needed'] && needs.tags.result == 'success'
+    needs:
+      - tags
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: production
+      url: ${{ vars.URL }}
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Create application GitHub Release
+        uses: SayakMukhopadhyay/github-actions/create-release@v1
+        with:
+          token: ${{ github.token }}
+          tag-name: v${{ inputs['application-version'] }}
+          release-name: KFlared v${{ inputs['application-version'] }}
+          make-latest: "true"
+          openai-wif-audience: ${{ vars.OPENAI_WIF_AUDIENCE }}
+          openai-identity-provider-id: ${{ vars.OPENAI_IDENTITY_PROVIDER_ID }}
+          openai-service-account-id: ${{ vars.OPENAI_SERVICE_ACCOUNT_ID }}
+          pathspecs: |
+            :(top,glob)**
+            :(top,glob,exclude)charts/**
+
+  chart-release:
+    name: Create chart release
+    if: inputs['chart-release-needed'] && needs.tags.result == 'success'
+    needs:
+      - tags
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: production
+      url: ${{ vars.URL }}
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Create chart GitHub Release
+        uses: SayakMukhopadhyay/github-actions/create-release@v1
+        with:
+          token: ${{ github.token }}
+          tag-name: chart-v${{ inputs['chart-version'] }}
+          release-name: KFlared chart v${{ inputs['chart-version'] }}
+          make-latest: "false"
+          openai-wif-audience: ${{ vars.OPENAI_WIF_AUDIENCE }}
+          openai-identity-provider-id: ${{ vars.OPENAI_IDENTITY_PROVIDER_ID }}
+          openai-service-account-id: ${{ vars.OPENAI_SERVICE_ACCOUNT_ID }}
+          pathspecs: |
+            :(top,glob)charts/**

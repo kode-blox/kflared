@@ -1,0 +1,43 @@
+name: Manual Development Delivery
+
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: Development component to deliver from the selected ref
+        required: true
+        type: choice
+        options:
+          - application
+          - chart
+          - both
+      deploy:
+        description: Deploy the prepared artifacts to development
+        required: false
+        default: true
+        type: boolean
+
+permissions: {}
+
+jobs:
+  ci:
+    name: CI
+    permissions:
+      contents: read
+    uses: $/.github/workflows/ci.yaml
+
+  deliver-development:
+    name: Deliver Development
+    needs:
+      - ci
+    permissions:
+      contents: read
+      packages: write
+    uses: $/.github/workflows/deliver-development.yaml
+    with:
+      deliver-application: ${{ inputs.component == 'application' || inputs.component == 'both' }}
+      deliver-chart: ${{ inputs.component == 'chart' || inputs.component == 'both' }}
+      application-version: ${{ needs.ci.outputs.application-version }}
+      deploy: ${{ inputs.deploy }}
+    secrets:
+      GITOPS_APP_PRIVATE_KEY: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}

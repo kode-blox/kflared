@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  workflow_call:
+    outputs:
+      application-version:
+        description: Validated application version from the root VERSION file
+        value: ${{ jobs.build-go.outputs.application-version }}
+
+permissions: {}
+
+jobs:
+  build-go:
+    name: Build Go
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    outputs:
+      application-version: ${{ steps.versions.outputs.application-version }}
+
+    steps:
+      - name: Checkout and install dependencies
+        uses: SayakMukhopadhyay/github-actions/checkout-dependencies@v1
+        with:
+          go-version: '1.27.0'
+          working-directory: .
+
+      - name: Install Task
+        uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.53.1
+          checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
+
+      - name: Validate version metadata
+        uses: SayakMukhopadhyay/github-actions/check-version@v1
+        with:
+          working-directory: .
+          helm: 'true'
+
+      - id: versions
+        name: Read validated application version
+        shell: bash
+        run: printf 'application-version=%s\n' "$(<VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Verify module metadata
+        run: |
+          task tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Check formatting
+        run: task fmt-check
+
+      - name: Run linter
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.2
+
+      - name: Vet
+        run: task vet
+
+      - name: Test
+        run: task test-unit
+
+      - name: Verify generated files
+        run: |
+          task manifests
+          task generate
+          git diff --exit-code
+
+      - name: Build
+        run: task compile
+
+      - name: Vulnerability scan
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-input: 1.27.0
+          go-package: ./...
+          cache: false
+
+      - name: Validate GitHub Actions workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+  test-e2e:
+    name: Test E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout and install dependencies
+        uses: SayakMukhopadhyay/github-actions/checkout-dependencies@v1
+        with:
+          go-version: '1.27.0'
+          working-directory: .
+
+      - name: Install Task
+        uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.53.1
+          checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
+
+      - name: Run E2E tests
+        run: task test-e2e
+
+  build-helm:
+    name: Build Helm
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Validate and package chart
+        uses: SayakMukhopadhyay/github-actions/helm-package-push@v1
+        with:
+          app-version: build-${{ github.sha }}
+          push: 'false'
+          working-directory: .
+
+      - name: Install Task
+        uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.53.1
+          checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
+
+      - name: Render supported chart configurations
+        run: task helm-template
