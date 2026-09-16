@@ -33,7 +33,7 @@ import (
 
 var (
 	// managerImage is the manager image to be built and loaded for testing.
-	managerImage = "example.com/kflared:v0.0.1"
+	managerImage = "example.com/kflared:v0.0.0"
 	// shouldCleanupCertManager tracks whether CertManager was installed by this suite.
 	shouldCleanupCertManager = false
 )
@@ -50,12 +50,22 @@ func TestE2E(t *testing.T) {
 	RunSpecs(t, "e2e suite")
 }
 
+func taskCommand(arguments ...string) *exec.Cmd {
+	taskArguments := []string{
+		"-NoLogo",
+		"-NoProfile",
+		"-NonInteractive",
+		"-File",
+		"../../task.ps1",
+	}
+	taskArguments = append(taskArguments, arguments...)
+
+	return exec.Command("pwsh", taskArguments...)
+}
+
 var _ = BeforeSuite(func() {
 	By("building the manager image")
-	cmd := exec.Command(
-		"go", "-C", "tools/task", "tool", "task", "--dir", "../..", "docker-build",
-		fmt.Sprintf("IMG=%s", managerImage),
-	)
+	cmd := taskCommand("docker-build", fmt.Sprintf("IMG=%s", managerImage))
 	_, err := utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager image")
 

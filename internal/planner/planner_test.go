@@ -20,7 +20,6 @@ import (
 	"strings"
 	"testing"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	kflaredv1alpha1 "github.com/kode-blox/kflared/api/v1alpha1"
@@ -41,8 +40,8 @@ func TestNormalizeHostnames(t *testing.T) {
 
 func TestTunnelNameContainsFullBindingUID(t *testing.T) {
 	binding := &kflaredv1alpha1.CloudflareTunnelBinding{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "tenant", UID: types.UID("11111111-2222-3333-4444-555555555555")},
-		Spec:       kflaredv1alpha1.CloudflareTunnelBindingSpec{GatewayRef: kflaredv1alpha1.GatewayReference{Name: "gateway"}},
+		Namespace: "tenant", UID: types.UID("11111111-2222-3333-4444-555555555555"),
+		Spec: kflaredv1alpha1.CloudflareTunnelBindingSpec{GatewayRef: kflaredv1alpha1.GatewayReference{Name: "gateway"}},
 	}
 	name := TunnelName(types.UID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"), binding)
 	if len(name) > maxTunnelNameLength {

@@ -64,17 +64,12 @@ var _ = Describe("Manager", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
 
 		By("installing CRDs")
-		cmd = exec.Command(
-			"go", "-C", "tools/task", "tool", "task", "--dir", "../..", "install",
-		)
+		cmd = taskCommand("install")
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
 
 		By("deploying the controller-manager")
-		cmd = exec.Command(
-			"go", "-C", "tools/task", "tool", "task", "--dir", "../..", "deploy",
-			fmt.Sprintf("IMG=%s", managerImage),
-		)
+		cmd = taskCommand("deploy", fmt.Sprintf("IMG=%s", managerImage))
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 	})
@@ -87,15 +82,11 @@ var _ = Describe("Manager", Ordered, func() {
 		_, _ = utils.Run(cmd)
 
 		By("undeploying the controller-manager")
-		cmd = exec.Command(
-			"go", "-C", "tools/task", "tool", "task", "--dir", "../..", "undeploy",
-		)
+		cmd = taskCommand("undeploy")
 		_, _ = utils.Run(cmd)
 
 		By("uninstalling CRDs")
-		cmd = exec.Command(
-			"go", "-C", "tools/task", "tool", "task", "--dir", "../..", "uninstall",
-		)
+		cmd = taskCommand("uninstall")
 		_, _ = utils.Run(cmd)
 
 		By("removing manager namespace")
@@ -253,8 +244,8 @@ var _ = Describe("Manager", Ordered, func() {
 						"serviceAccountName": "%s"
 					}
 				}`, token, metricsServiceName, namespace, serviceAccountName))
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create curl-metrics pod")
+			output, err := cmd.CombinedOutput()
+			Expect(err).NotTo(HaveOccurred(), "Failed to create curl-metrics pod: %s", output)
 
 			By("waiting for the curl-metrics pod to complete.")
 			verifyCurlUp := func(g Gomega) {

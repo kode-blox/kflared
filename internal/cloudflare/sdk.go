@@ -136,7 +136,7 @@ func (c *sdkClient) GetToken(ctx context.Context, id string) (string, error) {
 		return "", err
 	}
 	if result == nil || *result == "" {
-		return "", fmt.Errorf("Cloudflare returned an empty tunnel token")
+		return "", fmt.Errorf("cloudflare returned an empty tunnel token")
 	}
 	return *result, nil
 }

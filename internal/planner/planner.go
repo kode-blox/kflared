@@ -19,7 +19,7 @@ package planner
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -46,7 +46,7 @@ func NormalizeZones(zones []string) ([]string, error) {
 	for zone := range unique {
 		result = append(result, zone)
 	}
-	sort.Strings(result)
+	slices.Sort(result)
 	return result, nil
 }
 
@@ -127,7 +127,7 @@ func sortedKeys(values map[string]struct{}) []string {
 	for value := range values {
 		result = append(result, value)
 	}
-	sort.Strings(result)
+	slices.Sort(result)
 	return result
 }
 

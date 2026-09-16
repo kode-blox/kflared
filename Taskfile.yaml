@@ -4,26 +4,28 @@ vars:
   IMG: '{{.IMG | default "controller:latest"}}'
   BASE_IMAGE: '{{.BASE_IMAGE | default ""}}'
   CONTAINER_TOOL: '{{.CONTAINER_TOOL | default "docker"}}'
+  LOCALBIN: '{{.LOCALBIN | default (printf "%s/bin" .ROOT_DIR)}}'
   HELM: '{{.HELM | default "helm"}}'
+  HELM_KUBE_VERSION: '{{.HELM_KUBE_VERSION | default "1.35.0"}}'
   KUBECTL: '{{.KUBECTL | default "kubectl"}}'
-  KIND: '{{.KIND | default "kind"}}'
+  KIND: '{{.KIND | default (printf "%s/kind%s" .LOCALBIN (exeExt))}}'
   KIND_CLUSTER: '{{.KIND_CLUSTER | default "kflared-test-e2e"}}'
   PLATFORMS: '{{.PLATFORMS | default "linux/arm64,linux/amd64,linux/s390x,linux/ppc64le"}}'
   IGNORE_NOT_FOUND: '{{index . "ignore-not-found" | default (.IGNORE_NOT_FOUND | default "false")}}'
-  LOCALBIN: '{{.LOCALBIN | default (printf "%s/bin" .ROOT_DIR)}}'
   KUSTOMIZE: '{{.KUSTOMIZE | default (printf "%s/kustomize%s" .LOCALBIN (exeExt))}}'
   CONTROLLER_GEN: '{{.CONTROLLER_GEN | default (printf "%s/controller-gen%s" .LOCALBIN (exeExt))}}'
   ENVTEST: '{{.ENVTEST | default (printf "%s/setup-envtest%s" .LOCALBIN (exeExt))}}'
   GOLANGCI_LINT: '{{.GOLANGCI_LINT | default (printf "%s/golangci-lint%s" .LOCALBIN (exeExt))}}'
   KUSTOMIZE_VERSION: '{{.KUSTOMIZE_VERSION | default "v5.8.1"}}'
   CONTROLLER_TOOLS_VERSION: '{{.CONTROLLER_TOOLS_VERSION | default "v0.22.0"}}'
-  GOLANGCI_LINT_VERSION: '{{.GOLANGCI_LINT_VERSION | default "v2.13.1"}}'
+  GOLANGCI_LINT_VERSION: '{{.GOLANGCI_LINT_VERSION | default "v2.13.2"}}'
+  KIND_VERSION: '{{.KIND_VERSION | default "v0.33.0"}}'
 
 tasks:
   default:
-    desc: Build KFlared
+    desc: Display available tasks
     cmds:
-      - task: build
+      - task: help
 
   all:
     desc: Build KFlared
@@ -45,7 +47,8 @@ tasks:
       - task: controller-gen
       - cmd: |
           pwsh -NoLogo -NoProfile -NonInteractive -Command '
-            & $env:CONTROLLER_GEN rbac:roleName=manager-role crd webhook "paths=./..." `
+            & $env:CONTROLLER_GEN rbac:roleName=manager-role crd webhook `
+              "paths=./api/v1alpha1;./internal/controller" `
               output:crd:artifacts:config=config/crd/bases
             exit $LASTEXITCODE
           '
@@ -63,7 +66,8 @@ tasks:
       - task: controller-gen
       - cmd: |
           pwsh -NoLogo -NoProfile -NonInteractive -Command '
-            & $env:CONTROLLER_GEN "object:headerFile=hack\boilerplate.go.txt,year=$env:YEAR" "paths=./..."
+            & $env:CONTROLLER_GEN "object:headerFile=hack\boilerplate.go.txt,year=$env:YEAR" `
+              "paths=./api/v1alpha1"
             exit $LASTEXITCODE
           '
 
@@ -73,6 +77,31 @@ tasks:
     cmds:
       - go fmt ./...
 
+  fmt-check:
+    desc: Verify Go source formatting without modifying files
+    deps: [require-pwsh]
+    cmds:
+      - cmd: |
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '
+            $files = @(& git ls-files -- "*.go")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if ($files.Count -eq 0) { exit 0 }
+
+            $unformatted = @(& gofmt -l @files)
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if ($unformatted.Count -eq 0) { exit 0 }
+
+            Write-Error "The following Go files are not formatted:"
+            $unformatted | ForEach-Object { Write-Output $_ }
+            exit 1
+          '
+
+  tidy:
+    desc: Synchronize Go module metadata with source imports
+    deps: [require-pwsh]
+    cmds:
+      - go mod tidy
+
   vet:
     desc: Run go vet against the code
     deps: [require-pwsh]
@@ -80,7 +109,17 @@ tasks:
       - go vet ./...
 
   test:
-    desc: Run unit tests
+    desc: Run validation and unit tests
+    deps: [require-pwsh]
+    cmds:
+      - task: manifests
+      - task: generate
+      - task: fmt-check
+      - task: vet
+      - task: test-unit
+
+  test-unit:
+    desc: Run unit tests without formatting, generation, or vetting
     deps: [require-pwsh]
     vars:
       DEFAULT_ENVTEST_K8S_VERSION:
@@ -105,10 +144,6 @@ tasks:
       ENVTEST_K8S_VERSION: '{{.ENVTEST_K8S_VERSION | default .DEFAULT_ENVTEST_K8S_VERSION}}'
       LOCALBIN: '{{.LOCALBIN}}'
     cmds:
-      - task: manifests
-      - task: generate
-      - task: fmt
-      - task: vet
       - task: setup-envtest
       - cmd: |
           pwsh -NoLogo -NoProfile -NonInteractive -Command '
@@ -131,6 +166,7 @@ tasks:
       KIND: '{{.KIND}}'
       KIND_CLUSTER: '{{.KIND_CLUSTER}}'
     cmds:
+      - task: kind
       - cmd: |
           pwsh -NoLogo -NoProfile -NonInteractive -Command '
             if (-not (Get-Command $env:KIND -ErrorAction SilentlyContinue)) {
@@ -138,10 +174,10 @@ tasks:
               exit 1
             }
 
-            $clusters = (& $env:KIND get clusters | Out-String)
+            $clusters = @(& $env:KIND get clusters)
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-            if ($clusters.Contains($env:KIND_CLUSTER)) {
+            if ($clusters -contains $env:KIND_CLUSTER) {
               Write-Output "Kind cluster $env:KIND_CLUSTER already exists. Skipping creation."
               exit 0
             }
@@ -156,12 +192,10 @@ tasks:
     deps: [require-pwsh]
     cmds:
       - task: setup-test-e2e
+      - defer: { task: cleanup-test-e2e }
       - task: manifests
       - task: generate
-      - task: fmt
-      - task: vet
       - go test -tags=e2e ./test/e2e/ -v -ginkgo.v
-      - task: cleanup-test-e2e
     env:
       KIND: '{{.KIND}}'
       KIND_CLUSTER: '{{.KIND_CLUSTER}}'
@@ -204,13 +238,18 @@ tasks:
     deps: [require-pwsh]
     env:
       HELM: '{{.HELM}}'
+      HELM_KUBE_VERSION: '{{.HELM_KUBE_VERSION}}'
     cmds:
       - cmd: |
           pwsh -NoLogo -NoProfile -NonInteractive -Command '
-            & $env:HELM template kflared ./charts --namespace kflared-system --include-crds | Out-Null
+            & $env:HELM template kflared ./charts --namespace kflared-system --include-crds `
+              --kube-version $env:HELM_KUBE_VERSION | Out-Null
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-            & $env:HELM template kflared ./charts --namespace kflared-system --include-crds `
+            & $env:HELM template custom ./charts --namespace custom-system --include-crds `
+              --kube-version $env:HELM_KUBE_VERSION `
+              --set fullnameOverride=custom-controller `
+              --set kubernetesComponent=custom `
               --set rbac.helperRoles.enabled=true `
               --set serviceMonitor.enabled=true | Out-Null
             exit $LASTEXITCODE
@@ -224,6 +263,12 @@ tasks:
       - task: generate
       - task: fmt
       - task: vet
+      - task: compile
+
+  compile:
+    desc: Compile the KFlared binary without running validation tasks
+    deps: [require-pwsh]
+    cmds:
       - go build -o bin/kflared{{exeExt}} cmd/main.go
 
   run:
@@ -239,8 +284,12 @@ tasks:
   docker-build:
     desc: Build the manager container image
     deps: [require-pwsh]
+    vars:
+      DEFAULT_COMMIT:
+        sh: git rev-parse HEAD
     env:
       BASE_IMAGE: '{{.BASE_IMAGE}}'
+      COMMIT: '{{.COMMIT | default .DEFAULT_COMMIT}}'
       CONTAINER_TOOL: '{{.CONTAINER_TOOL}}'
       IMG: '{{.IMG}}'
     cmds:
@@ -250,6 +299,7 @@ tasks:
             if ($env:BASE_IMAGE) {
               $arguments += @("--build-arg", "BASE_IMAGE=$env:BASE_IMAGE")
             }
+            $arguments += @("--build-arg", "COMMIT=$env:COMMIT")
             $arguments += @("-t", $env:IMG, ".")
 
             & $env:CONTAINER_TOOL @arguments
@@ -265,8 +315,12 @@ tasks:
   docker-buildx:
     desc: Build and push the manager image for multiple platforms
     deps: [require-pwsh]
+    vars:
+      DEFAULT_COMMIT:
+        sh: git rev-parse HEAD
     env:
       BASE_IMAGE: '{{.BASE_IMAGE}}'
+      COMMIT: '{{.COMMIT | default .DEFAULT_COMMIT}}'
       CONTAINER_TOOL: '{{.CONTAINER_TOOL}}'
       IMG: '{{.IMG}}'
       PLATFORMS: '{{.PLATFORMS}}'
@@ -308,6 +362,7 @@ tasks:
             if ($env:BASE_IMAGE) {
               $arguments += @("--build-arg", "BASE_IMAGE=$env:BASE_IMAGE")
             }
+            $arguments += @("--build-arg", "COMMIT=$env:COMMIT")
             $arguments += @("--tag", $env:IMG, "-f", $crossPath, ".")
             Invoke-IgnoredNativeCommand {
               & $env:CONTAINER_TOOL buildx @arguments
@@ -414,18 +469,25 @@ tasks:
       - cmd: |
           pwsh -NoLogo -NoProfile -NonInteractive -Command '
             $ErrorActionPreference = "Stop"
-            Push-Location config/manager
+            $managerKustomization = Join-Path $PWD "config/manager/kustomization.yaml"
+            $originalManagerKustomization = [System.IO.File]::ReadAllBytes($managerKustomization)
             try {
-              & $env:KUSTOMIZE edit set image "controller=$env:IMG"
+              Push-Location config/manager
+              try {
+                & $env:KUSTOMIZE edit set image "controller=$env:IMG"
+              } finally {
+                Pop-Location
+              }
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            } finally {
-              Pop-Location
-            }
 
-            $output = @(& $env:KUSTOMIZE build config/default)
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            $output | & $env:KUBECTL apply -f -
-            exit $LASTEXITCODE
+              $output = @(& $env:KUSTOMIZE build config/default)
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              $output | & $env:KUBECTL apply -f -
+              $exitCode = $LASTEXITCODE
+            } finally {
+              [System.IO.File]::WriteAllBytes($managerKustomization, $originalManagerKustomization)
+            }
+            exit $exitCode
           '
 
   undeploy:
@@ -520,6 +582,17 @@ tasks:
           TOOL_PACKAGE: sigs.k8s.io/kustomize/kustomize/v5
           TOOL_PATH: '{{.KUSTOMIZE}}'
           TOOL_VERSION: '{{.KUSTOMIZE_VERSION}}'
+
+  kind:
+    desc: Download Kind locally if necessary
+    run: once
+    cmds:
+      - task: go-install-tool
+        vars:
+          TOOL_NAME: kind
+          TOOL_PACKAGE: sigs.k8s.io/kind
+          TOOL_PATH: '{{.KIND}}'
+          TOOL_VERSION: '{{.KIND_VERSION}}'
 
   controller-gen:
     desc: Download controller-gen locally if necessary
