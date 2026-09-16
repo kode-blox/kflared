@@ -64,6 +64,8 @@ const (
 	maxConnectorReplicas     = int32(10)
 )
 
+var errProviderStatusUnknown = errors.New("CloudflareProvider status is not currently known")
+
 // CloudflareTunnelBindingReconciler reconciles a CloudflareTunnelBinding object.
 type CloudflareTunnelBindingReconciler struct {
 	client.Client
@@ -103,7 +105,10 @@ func (r *CloudflareTunnelBindingReconciler) Reconcile(ctx context.Context, req c
 			}
 			return *result, err
 		}
-		return ctrl.Result{}, err
+		if errors.Is(err, errProviderStatusUnknown) {
+			return ctrl.Result{}, r.reportOperationalFailure(ctx, binding, kflaredv1alpha1.BindingConditionReady, "ProviderStatusUnknown", "The referenced CloudflareProvider status is not currently known", err)
+		}
+		return ctrl.Result{}, r.reportOperationalFailure(ctx, binding, kflaredv1alpha1.BindingConditionProgrammed, "TunnelReconciliationFailed", "Tunnel reconciliation could not complete", err)
 	}
 
 	if !controllerutil.ContainsFinalizer(binding, bindingFinalizer) {
@@ -116,48 +121,55 @@ func (r *CloudflareTunnelBindingReconciler) Reconcile(ctx context.Context, req c
 
 	apiToken, err := r.readAPIToken(ctx, provider)
 	if err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, r.reportOperationalFailure(ctx, binding, kflaredv1alpha1.BindingConditionConnectorReady, "ConnectorReconciliationFailed", "Connector reconciliation could not complete", err)
 	}
 	cloudflareClient := r.cloudflare().New(apiToken, provider.Spec.AccountID)
 
 	clusterNamespace := &corev1.Namespace{}
 	if err := r.Get(ctx, types.NamespacedName{Name: metav1.NamespaceSystem}, clusterNamespace); err != nil {
-		return ctrl.Result{}, fmt.Errorf("read cluster identity: %w", err)
+		cause := fmt.Errorf("read cluster identity: %w", err)
+		return ctrl.Result{}, r.reportOperationalFailure(ctx, binding, kflaredv1alpha1.BindingConditionProgrammed, "TunnelReconciliationFailed", "Tunnel reconciliation could not complete", cause)
 	}
 	tunnelName := planner.TunnelName(clusterNamespace.UID, binding)
 	tunnel, err := r.ensureTunnel(ctx, cloudflareClient, binding, tunnelName)
 	if err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, r.reportOperationalFailure(ctx, binding, kflaredv1alpha1.BindingConditionProgrammed, "TunnelReconciliationFailed", "Tunnel reconciliation could not complete", err)
 	}
 
 	desiredIngress := planner.IngressRules(hostnames, origin)
 	currentIngress, err := cloudflareClient.GetConfiguration(ctx, tunnel.ID)
-	if err != nil || !planner.EqualIngress(currentIngress, desiredIngress) {
+	if err != nil {
+		cause := fmt.Errorf("get Cloudflare Tunnel configuration: %w", err)
+		return ctrl.Result{}, r.reportOperationalFailure(ctx, binding, kflaredv1alpha1.BindingConditionProgrammed, "TunnelReconciliationFailed", "Tunnel reconciliation could not complete", cause)
+	}
+	if !planner.EqualIngress(currentIngress, desiredIngress) {
 		if updateErr := cloudflareClient.UpdateConfiguration(ctx, tunnel.ID, desiredIngress); updateErr != nil {
-			return ctrl.Result{}, fmt.Errorf("update Cloudflare Tunnel configuration: %w", updateErr)
+			cause := fmt.Errorf("update Cloudflare Tunnel configuration: %w", updateErr)
+			return ctrl.Result{}, r.reportOperationalFailure(ctx, binding, kflaredv1alpha1.BindingConditionProgrammed, "TunnelReconciliationFailed", "Tunnel reconciliation could not complete", cause)
 		}
 	}
 
 	token, err := cloudflareClient.GetToken(ctx, tunnel.ID)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("retrieve Cloudflare Tunnel token: %w", err)
+		cause := fmt.Errorf("retrieve Cloudflare Tunnel token: %w", err)
+		return ctrl.Result{}, r.reportOperationalFailure(ctx, binding, kflaredv1alpha1.BindingConditionConnectorReady, "ConnectorReconciliationFailed", "Connector reconciliation could not complete", cause)
 	}
 	resourceName := connectorResourceName(binding.UID)
 	if err := r.reconcileConnectorSecret(ctx, binding, resourceName, token); err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, r.reportOperationalFailure(ctx, binding, kflaredv1alpha1.BindingConditionConnectorReady, "ConnectorReconciliationFailed", "Connector reconciliation could not complete", err)
 	}
 	deployment, err := r.reconcileConnectorDeployment(ctx, binding, resourceName)
 	if err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, r.reportOperationalFailure(ctx, binding, kflaredv1alpha1.BindingConditionConnectorReady, "ConnectorReconciliationFailed", "Connector reconciliation could not complete", err)
 	}
 	if err := r.reconcilePodDisruptionBudget(ctx, binding, resourceName); err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, r.reportOperationalFailure(ctx, binding, kflaredv1alpha1.BindingConditionConnectorReady, "ConnectorReconciliationFailed", "Connector reconciliation could not complete", err)
 	}
 
 	tunnelCNAME := tunnel.ID + "." + tunnelCNAMEZone
 	dnsAutomated, err := r.reconcileDNSEndpoint(ctx, binding, resourceName, hostnames, tunnelCNAME)
 	if err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, r.reportOperationalFailure(ctx, binding, kflaredv1alpha1.BindingConditionDNSAutomationReady, "DNSReconciliationFailed", "DNS automation reconciliation could not complete", err)
 	}
 	connectorReady := deployment.Status.AvailableReplicas >= effectiveReplicas(binding.Spec.ConnectorReplicas)
 	if err := r.setReadyStatus(ctx, binding, tunnel, tunnelCNAME, resourceName, hostnames, connectorReady, dnsAutomated); err != nil {
@@ -181,7 +193,7 @@ func (r *CloudflareTunnelBindingReconciler) validateAndPlan(ctx context.Context,
 	}
 	if !acceptedCurrent || accepted.Status != metav1.ConditionTrue ||
 		!credentialsCurrent || credentialsValid.Status != metav1.ConditionTrue {
-		return nil, nil, "", nil, fmt.Errorf("CloudflareProvider %q readiness is not currently known", provider.Name)
+		return nil, nil, "", nil, fmt.Errorf("%w: %q", errProviderStatusUnknown, provider.Name)
 	}
 	namespace := &corev1.Namespace{}
 	if err := r.Get(ctx, types.NamespacedName{Name: binding.Namespace}, namespace); err != nil {
@@ -420,6 +432,17 @@ func (r *CloudflareTunnelBindingReconciler) setReadyStatus(ctx context.Context, 
 		setCondition(&binding.Status.Conditions, binding.Generation, kflaredv1alpha1.BindingConditionReady, metav1.ConditionFalse, "DependenciesNotReady", "Connector availability or DNS automation is incomplete")
 	}
 	return r.Status().Patch(ctx, binding, client.MergeFrom(base))
+}
+
+func (r *CloudflareTunnelBindingReconciler) reportOperationalFailure(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding, failedCondition, reason, message string, cause error) error {
+	base := binding.DeepCopy()
+	binding.Status.ObservedGeneration = binding.Generation
+	setCondition(&binding.Status.Conditions, binding.Generation, failedCondition, metav1.ConditionUnknown, reason, message)
+	if failedCondition != kflaredv1alpha1.BindingConditionReady {
+		setCondition(&binding.Status.Conditions, binding.Generation, kflaredv1alpha1.BindingConditionReady, metav1.ConditionUnknown, reason, message)
+	}
+	patchErr := r.Status().Patch(ctx, binding, client.MergeFrom(base))
+	return errors.Join(cause, patchErr)
 }
 
 func (r *CloudflareTunnelBindingReconciler) rejected(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding, reason, message string, cause error) (*kflaredv1alpha1.CloudflareProvider, []string, string, *ctrl.Result, error) {

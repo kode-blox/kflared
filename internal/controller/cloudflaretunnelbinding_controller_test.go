@@ -52,6 +52,40 @@ const (
 	routeParentTestSectionName = "http"
 )
 
+type failingGetClient struct {
+	client.Client
+	objectType reflect.Type
+	key        types.NamespacedName
+	err        error
+}
+
+func (c *failingGetClient) Get(ctx context.Context, key client.ObjectKey, object client.Object, opts ...client.GetOption) error {
+	if reflect.TypeOf(object) == c.objectType && key == c.key {
+		return c.err
+	}
+	return c.Client.Get(ctx, key, object, opts...)
+}
+
+type failingStatusClient struct {
+	client.Client
+	patchErr   error
+	patchCalls int
+}
+
+func (c *failingStatusClient) Status() client.SubResourceWriter {
+	return &failingStatusWriter{SubResourceWriter: c.Client.Status(), client: c}
+}
+
+type failingStatusWriter struct {
+	client.SubResourceWriter
+	client *failingStatusClient
+}
+
+func (w *failingStatusWriter) Patch(_ context.Context, _ client.Object, _ client.Patch, _ ...client.SubResourcePatchOption) error {
+	w.client.patchCalls++
+	return w.client.patchErr
+}
+
 func TestBindingReconcileCreatesIdempotentTunnelAndHardenedConnectors(t *testing.T) {
 	scheme := bindingTestScheme(t)
 	objects, binding := validBindingObjects()
@@ -134,6 +168,14 @@ func TestBindingDeprogramsTunnelWhenItLosesEligibility(t *testing.T) {
 	if cloudflare.updateCalls != 1 || len(cloudflare.configuration) != 1 || cloudflare.configuration[0].Service != "http_status:404" {
 		t.Fatalf("tunnel was not safely deprogrammed: %#v", cloudflare.configuration)
 	}
+	actual := &kflaredv1alpha1.CloudflareTunnelBinding{}
+	if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
+		t.Fatal(err)
+	}
+	programmed := apiMeta.FindStatusCondition(actual.Status.Conditions, kflaredv1alpha1.BindingConditionProgrammed)
+	if programmed == nil || programmed.Status != metav1.ConditionFalse || programmed.Reason != "NoEligibleHostnames" {
+		t.Fatalf("Programmed condition = %#v, want False/NoEligibleHostnames", programmed)
+	}
 }
 
 func TestBindingRejectsCurrentProviderFailure(t *testing.T) {
@@ -170,6 +212,15 @@ func TestBindingRejectsCurrentProviderFailure(t *testing.T) {
 			}
 			if cloudflare.updateCalls != 1 || len(cloudflare.configuration) != 1 || cloudflare.configuration[0].Service != "http_status:404" {
 				t.Fatalf("confirmed provider failure did not deprogram the tunnel: %#v", cloudflare.configuration)
+			}
+			actual := &kflaredv1alpha1.CloudflareTunnelBinding{}
+			if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
+				t.Fatal(err)
+			}
+			accepted := apiMeta.FindStatusCondition(actual.Status.Conditions, kflaredv1alpha1.BindingConditionAccepted)
+			ready := apiMeta.FindStatusCondition(actual.Status.Conditions, kflaredv1alpha1.BindingConditionReady)
+			if accepted == nil || accepted.Status != metav1.ConditionFalse || ready == nil || ready.Status != metav1.ConditionFalse {
+				t.Fatalf("deterministic rejection conditions Accepted=%#v Ready=%#v, want False", accepted, ready)
 			}
 		})
 	}
@@ -220,8 +271,8 @@ func TestBindingPreservesWorkingTunnelWhileProviderCredentialsAreIndeterminate(t
 			request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: binding.Namespace, Name: binding.Name}}
 
 			result, err := reconciler.Reconcile(context.Background(), request)
-			if err == nil {
-				t.Fatal("Reconcile() error = nil, want operational provider readiness error")
+			if !errors.Is(err, errProviderStatusUnknown) {
+				t.Fatalf("Reconcile() error = %v, want provider status error", err)
 			}
 			if result != (ctrl.Result{}) {
 				t.Errorf("Reconcile() result = %#v, want zero result", result)
@@ -233,14 +284,171 @@ func TestBindingPreservesWorkingTunnelWhileProviderCredentialsAreIndeterminate(t
 				t.Fatalf("Cloudflare configuration changed: %#v", cloudflare.configuration)
 			}
 
-			actual := &kflaredv1alpha1.CloudflareTunnelBinding{}
-			if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(actual.Status, expectedStatus) {
-				t.Fatalf("binding status changed while provider readiness was indeterminate:\n got: %#v\nwant: %#v", actual.Status, expectedStatus)
+			actual := assertOperationalFailureStatus(t, kubeClient, request.NamespacedName, expectedStatus, kflaredv1alpha1.BindingConditionReady, "ProviderStatusUnknown", "The referenced CloudflareProvider status is not currently known")
+			programmed := apiMeta.FindStatusCondition(actual.Status.Conditions, kflaredv1alpha1.BindingConditionProgrammed)
+			if programmed == nil || programmed.Status != metav1.ConditionTrue {
+				t.Fatalf("Programmed condition = %#v, want unchanged True", programmed)
 			}
 		})
+	}
+}
+
+func TestBindingReportsOperationalReconciliationFailures(t *testing.T) {
+	tests := []struct {
+		name              string
+		failedCondition   string
+		reason            string
+		message           string
+		cloudflareFailure func(*fakeCloudflareClient, error)
+		objectFailure     client.Object
+		objectKey         types.NamespacedName
+	}{
+		{
+			name:            "cluster identity",
+			failedCondition: kflaredv1alpha1.BindingConditionProgrammed,
+			reason:          "TunnelReconciliationFailed",
+			message:         "Tunnel reconciliation could not complete",
+			objectFailure:   &corev1.Namespace{},
+			objectKey:       types.NamespacedName{Name: metav1.NamespaceSystem},
+		},
+		{
+			name:            "tunnel",
+			failedCondition: kflaredv1alpha1.BindingConditionProgrammed,
+			reason:          "TunnelReconciliationFailed",
+			message:         "Tunnel reconciliation could not complete",
+			cloudflareFailure: func(cloudflare *fakeCloudflareClient, failure error) {
+				cloudflare.getTunnelErr = failure
+			},
+		},
+		{
+			name:            "configuration",
+			failedCondition: kflaredv1alpha1.BindingConditionProgrammed,
+			reason:          "TunnelReconciliationFailed",
+			message:         "Tunnel reconciliation could not complete",
+			cloudflareFailure: func(cloudflare *fakeCloudflareClient, failure error) {
+				cloudflare.getConfigErr = failure
+			},
+		},
+		{
+			name:            "token",
+			failedCondition: kflaredv1alpha1.BindingConditionConnectorReady,
+			reason:          "ConnectorReconciliationFailed",
+			message:         "Connector reconciliation could not complete",
+			cloudflareFailure: func(cloudflare *fakeCloudflareClient, failure error) {
+				cloudflare.getTokenErr = failure
+			},
+		},
+		{
+			name:            "API token Secret",
+			failedCondition: kflaredv1alpha1.BindingConditionConnectorReady,
+			reason:          "ConnectorReconciliationFailed",
+			message:         "Connector reconciliation could not complete",
+			objectFailure:   &corev1.Secret{},
+			objectKey:       types.NamespacedName{Namespace: defaultSystemNamespace, Name: "cloudflare-api-token"},
+		},
+		{
+			name:            "connector Secret",
+			failedCondition: kflaredv1alpha1.BindingConditionConnectorReady,
+			reason:          "ConnectorReconciliationFailed",
+			message:         "Connector reconciliation could not complete",
+			objectFailure:   &corev1.Secret{},
+			objectKey:       types.NamespacedName{Namespace: defaultSystemNamespace, Name: "kflared-111111112222"},
+		},
+		{
+			name:            "Deployment",
+			failedCondition: kflaredv1alpha1.BindingConditionConnectorReady,
+			reason:          "ConnectorReconciliationFailed",
+			message:         "Connector reconciliation could not complete",
+			objectFailure:   &appsv1.Deployment{},
+			objectKey:       types.NamespacedName{Namespace: defaultSystemNamespace, Name: "kflared-111111112222"},
+		},
+		{
+			name:            "PodDisruptionBudget",
+			failedCondition: kflaredv1alpha1.BindingConditionConnectorReady,
+			reason:          "ConnectorReconciliationFailed",
+			message:         "Connector reconciliation could not complete",
+			objectFailure:   &policyv1.PodDisruptionBudget{},
+			objectKey:       types.NamespacedName{Namespace: defaultSystemNamespace, Name: "kflared-111111112222"},
+		},
+		{
+			name:            "DNS",
+			failedCondition: kflaredv1alpha1.BindingConditionDNSAutomationReady,
+			reason:          "DNSReconciliationFailed",
+			message:         "DNS automation reconciliation could not complete",
+			objectFailure:   &unstructured.Unstructured{},
+			objectKey:       types.NamespacedName{Namespace: "tenant", Name: "kflared-111111112222"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := bindingTestScheme(t)
+			objects, binding := validBindingObjects()
+			setPublishedBindingStatus(binding)
+			expectedStatus := binding.DeepCopy().Status
+			failure := errors.New("injected operational failure")
+			desiredConfiguration := planner.IngressRules([]string{"app.example.com"}, "http://traefik.tenant.svc.cluster.local:80")
+			cloudflare := &fakeCloudflareClient{
+				tunnel:        &cfclient.Tunnel{ID: binding.Status.TunnelID, Name: planner.TunnelName(types.UID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"), binding), ConfigSource: cfclient.ConfigSourceCloudflare},
+				configuration: slices.Clone(desiredConfiguration),
+				token:         "connector-token",
+			}
+			if tt.cloudflareFailure != nil {
+				tt.cloudflareFailure(cloudflare, failure)
+			}
+			baseClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.CloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}, &appsv1.Deployment{}).
+				WithObjects(objects...).Build()
+			var kubeClient client.Client = baseClient
+			if tt.objectFailure != nil {
+				kubeClient = &failingGetClient{Client: baseClient, objectType: reflect.TypeOf(tt.objectFailure), key: tt.objectKey, err: failure}
+			}
+			reconciler := &CloudflareTunnelBindingReconciler{
+				Client:     kubeClient,
+				Scheme:     scheme,
+				RESTMapper: bindingTestRESTMapper(),
+				Cloudflare: fakeCloudflareFactory{client: cloudflare},
+			}
+			request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: binding.Namespace, Name: binding.Name}}
+
+			result, err := reconciler.Reconcile(context.Background(), request)
+			if !errors.Is(err, failure) {
+				t.Fatalf("Reconcile() error = %v, want injected failure", err)
+			}
+			if result != (ctrl.Result{}) {
+				t.Errorf("Reconcile() result = %#v, want zero result", result)
+			}
+			if cloudflare.updateCalls != 0 || cloudflare.deleteCalls != 0 {
+				t.Fatalf("destructive Cloudflare calls update=%d delete=%d, want 0", cloudflare.updateCalls, cloudflare.deleteCalls)
+			}
+			if !reflect.DeepEqual(cloudflare.configuration, desiredConfiguration) {
+				t.Fatalf("Cloudflare configuration changed: %#v", cloudflare.configuration)
+			}
+			if cloudflare.tunnel == nil {
+				t.Fatal("Cloudflare tunnel was removed")
+			}
+			assertOperationalFailureStatus(t, kubeClient, request.NamespacedName, expectedStatus, tt.failedCondition, tt.reason, tt.message)
+		})
+	}
+}
+
+func TestBindingOperationalFailureReturnsCauseAndSinglePatchFailure(t *testing.T) {
+	scheme := bindingTestScheme(t)
+	patchFailure := errors.New("status patch failed")
+	kubeClient := &failingStatusClient{
+		Client:   fake.NewClientBuilder().WithScheme(scheme).Build(),
+		patchErr: patchFailure,
+	}
+	reconciler := &CloudflareTunnelBindingReconciler{Client: kubeClient, Scheme: scheme}
+	binding := &kflaredv1alpha1.CloudflareTunnelBinding{ObjectMeta: metav1.ObjectMeta{Name: "public", Namespace: "tenant", Generation: 1}}
+	cause := errors.New("tunnel operation failed")
+
+	err := reconciler.reportOperationalFailure(context.Background(), binding, kflaredv1alpha1.BindingConditionProgrammed, "TunnelReconciliationFailed", "Tunnel reconciliation could not complete", cause)
+
+	if !errors.Is(err, cause) || !errors.Is(err, patchFailure) {
+		t.Fatalf("reportOperationalFailure() error = %v, want cause and patch failure", err)
+	}
+	if kubeClient.patchCalls != 1 {
+		t.Fatalf("status patch calls = %d, want 1", kubeClient.patchCalls)
 	}
 }
 
@@ -477,6 +685,31 @@ func setPublishedBindingStatus(binding *kflaredv1alpha1.CloudflareTunnelBinding)
 			currentCondition(kflaredv1alpha1.BindingConditionReady, metav1.ConditionTrue),
 		},
 	}
+}
+
+func assertOperationalFailureStatus(t *testing.T, kubeClient client.Client, key types.NamespacedName, expected kflaredv1alpha1.CloudflareTunnelBindingStatus, failedCondition, reason, message string) *kflaredv1alpha1.CloudflareTunnelBinding {
+	t.Helper()
+	actual := &kflaredv1alpha1.CloudflareTunnelBinding{}
+	if err := kubeClient.Get(context.Background(), key, actual); err != nil {
+		t.Fatal(err)
+	}
+	expected.Conditions = actual.Status.Conditions
+	if !reflect.DeepEqual(actual.Status, expected) {
+		t.Fatalf("operational failure changed recovery status:\n got: %#v\nwant: %#v", actual.Status, expected)
+	}
+	accepted := apiMeta.FindStatusCondition(actual.Status.Conditions, kflaredv1alpha1.BindingConditionAccepted)
+	if accepted == nil || accepted.Status != metav1.ConditionTrue || accepted.ObservedGeneration != actual.Generation {
+		t.Fatalf("Accepted condition = %#v, want current True", accepted)
+	}
+	failed := apiMeta.FindStatusCondition(actual.Status.Conditions, failedCondition)
+	if failed == nil || failed.Status != metav1.ConditionUnknown || failed.Reason != reason || failed.Message != message || failed.ObservedGeneration != actual.Generation {
+		t.Fatalf("%s condition = %#v, want current Unknown/%s", failedCondition, failed, reason)
+	}
+	ready := apiMeta.FindStatusCondition(actual.Status.Conditions, kflaredv1alpha1.BindingConditionReady)
+	if ready == nil || ready.Status != metav1.ConditionUnknown || ready.Reason != reason || ready.Message != message || ready.ObservedGeneration != actual.Generation {
+		t.Fatalf("Ready condition = %#v, want current Unknown/%s", ready, reason)
+	}
+	return actual
 }
 
 func finalizingBindingObjects(deletionPolicy kflaredv1alpha1.DeletionPolicy) ([]client.Object, *kflaredv1alpha1.CloudflareTunnelBinding) {

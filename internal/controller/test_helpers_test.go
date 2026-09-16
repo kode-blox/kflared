@@ -34,6 +34,9 @@ func (f fakeCloudflareFactory) New(_, _ string) cfclient.Client { return f.clien
 
 type fakeCloudflareClient struct {
 	validateErr   error
+	getTunnelErr  error
+	getConfigErr  error
+	getTokenErr   error
 	deleteErr     error
 	tunnel        *cfclient.Tunnel
 	configuration []cfclient.IngressRule
@@ -54,6 +57,9 @@ func (f *fakeCloudflareClient) FindTunnelByName(_ context.Context, name string) 
 }
 
 func (f *fakeCloudflareClient) GetTunnel(_ context.Context, id string) (*cfclient.Tunnel, error) {
+	if f.getTunnelErr != nil {
+		return nil, f.getTunnelErr
+	}
 	if f.tunnel != nil && f.tunnel.ID == id {
 		copy := *f.tunnel
 		return &copy, nil
@@ -69,6 +75,9 @@ func (f *fakeCloudflareClient) CreateTunnel(_ context.Context, name string) (*cf
 }
 
 func (f *fakeCloudflareClient) GetConfiguration(context.Context, string) ([]cfclient.IngressRule, error) {
+	if f.getConfigErr != nil {
+		return nil, f.getConfigErr
+	}
 	return slices.Clone(f.configuration), nil
 }
 
@@ -78,7 +87,12 @@ func (f *fakeCloudflareClient) UpdateConfiguration(_ context.Context, _ string, 
 	return nil
 }
 
-func (f *fakeCloudflareClient) GetToken(context.Context, string) (string, error) { return f.token, nil }
+func (f *fakeCloudflareClient) GetToken(context.Context, string) (string, error) {
+	if f.getTokenErr != nil {
+		return "", f.getTokenErr
+	}
+	return f.token, nil
+}
 
 func (f *fakeCloudflareClient) DeleteTunnel(context.Context, string) error {
 	f.deleteCalls++
