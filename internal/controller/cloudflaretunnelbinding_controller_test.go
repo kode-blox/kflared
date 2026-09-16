@@ -122,12 +122,19 @@ func TestBindingDeprogramsTunnelWhenItLosesEligibility(t *testing.T) {
 	}
 }
 
-func TestConnectorReplicasNeverDropBelowTwo(t *testing.T) {
-	if got := effectiveReplicas(0); got != 2 {
-		t.Fatalf("effectiveReplicas(0) = %d", got)
+func TestConnectorReplicasClampedToSupportedRange(t *testing.T) {
+	tests := []struct {
+		value int32
+		want  int32
+	}{
+		{value: 0, want: 2},
+		{value: 5, want: 5},
+		{value: 11, want: 10},
 	}
-	if got := effectiveReplicas(5); got != 5 {
-		t.Fatalf("effectiveReplicas(5) = %d", got)
+	for _, tt := range tests {
+		if got := effectiveReplicas(tt.value); got != tt.want {
+			t.Errorf("effectiveReplicas(%d) = %d, want %d", tt.value, got, tt.want)
+		}
 	}
 }
 

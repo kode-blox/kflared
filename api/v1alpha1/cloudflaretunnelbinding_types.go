@@ -69,6 +69,7 @@ type CloudflareTunnelBindingSpec struct {
 	// connectorReplicas controls the number of official cloudflared connectors.
 	// +kubebuilder:default=2
 	// +kubebuilder:validation:Minimum=2
+	// +kubebuilder:validation:Maximum=10
 	ConnectorReplicas int32 `json:"connectorReplicas,omitempty"`
 
 	// deletionPolicy controls remote tunnel deletion. Kubernetes connector resources

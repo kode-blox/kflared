@@ -75,6 +75,18 @@ func TestCRDDefaultsAndImmutableOwnershipFields(t *testing.T) {
 	if err := kubeClient.Update(ctx, provider); err == nil {
 		t.Fatal("accountID mutation unexpectedly passed CRD validation")
 	}
+	tooManyReplicas := &kflaredv1alpha1.CloudflareTunnelBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "too-many-replicas", Namespace: "default"},
+		Spec: kflaredv1alpha1.CloudflareTunnelBindingSpec{
+			ProviderRef:       kflaredv1alpha1.LocalReference{Name: "default"},
+			GatewayRef:        kflaredv1alpha1.GatewayReference{Name: "gateway", SectionName: "http"},
+			GatewayServiceRef: kflaredv1alpha1.GatewayServiceReference{Name: "traefik", Port: intstr.FromInt32(80)},
+			ConnectorReplicas: 11,
+		},
+	}
+	if err := kubeClient.Create(ctx, tooManyReplicas); err == nil {
+		t.Fatal("connectorReplicas above ten unexpectedly passed CRD validation")
+	}
 
 	binding := &kflaredv1alpha1.CloudflareTunnelBinding{
 		ObjectMeta: metav1.ObjectMeta{Name: "defaults", Namespace: "default"},

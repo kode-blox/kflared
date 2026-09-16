@@ -61,6 +61,7 @@ const (
 	dnsEndpointKind          = "DNSEndpoint"
 	tunnelCNAMEZone          = "cfargotunnel.com"
 	defaultConnectorReplicas = int32(2)
+	maxConnectorReplicas     = int32(10)
 )
 
 // CloudflareTunnelBindingReconciler reconciles a CloudflareTunnelBinding object.
@@ -695,6 +696,9 @@ func routeAccepted(route *gatewayv1.HTTPRoute, binding *kflaredv1alpha1.Cloudfla
 func effectiveReplicas(value int32) int32 {
 	if value < defaultConnectorReplicas {
 		return defaultConnectorReplicas
+	}
+	if value > maxConnectorReplicas {
+		return maxConnectorReplicas
 	}
 	return value
 }

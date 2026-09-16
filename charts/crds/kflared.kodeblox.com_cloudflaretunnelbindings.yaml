@@ -58,6 +58,7 @@ spec:
                 description: connectorReplicas controls the number of official cloudflared
                   connectors.
                 format: int32
+                maximum: 10
                 minimum: 2
                 type: integer
               deletionPolicy:
