@@ -38,6 +38,12 @@ import (
 	"github.com/kode-blox/kflared/internal/planner"
 )
 
+const (
+	routeParentTestNamespace   = "tenant"
+	routeParentTestGatewayName = "traefik"
+	routeParentTestSectionName = "http"
+)
+
 func TestBindingReconcileCreatesIdempotentTunnelAndHardenedConnectors(t *testing.T) {
 	scheme := bindingTestScheme(t)
 	objects, binding := validBindingObjects()
@@ -135,6 +141,83 @@ func TestConnectorReplicasClampedToSupportedRange(t *testing.T) {
 		if got := effectiveReplicas(tt.value); got != tt.want {
 			t.Errorf("effectiveReplicas(%d) = %d, want %d", tt.value, got, tt.want)
 		}
+	}
+}
+
+func TestParentReferenceTargetsGateway(t *testing.T) {
+	section := gatewayv1.SectionName(routeParentTestSectionName)
+	otherNamespace := gatewayv1.Namespace("other")
+	wrongGroup := gatewayv1.Group("example.com")
+	wrongKind := gatewayv1.Kind("Service")
+	binding := &kflaredv1alpha1.CloudflareTunnelBinding{
+		ObjectMeta: metav1.ObjectMeta{Namespace: routeParentTestNamespace},
+		Spec: kflaredv1alpha1.CloudflareTunnelBindingSpec{
+			GatewayRef: kflaredv1alpha1.GatewayReference{Name: routeParentTestGatewayName, SectionName: routeParentTestSectionName},
+		},
+	}
+	tests := []struct {
+		name   string
+		parent gatewayv1.ParentReference
+		want   bool
+	}{
+		{
+			name:   "exact local parent with defaults",
+			parent: gatewayv1.ParentReference{Name: routeParentTestGatewayName, SectionName: &section},
+			want:   true,
+		},
+		{
+			name:   "same name and section in another namespace",
+			parent: gatewayv1.ParentReference{Name: routeParentTestGatewayName, Namespace: &otherNamespace, SectionName: &section},
+		},
+		{
+			name:   "wrong group",
+			parent: gatewayv1.ParentReference{Group: &wrongGroup, Name: routeParentTestGatewayName, SectionName: &section},
+		},
+		{
+			name:   "wrong kind",
+			parent: gatewayv1.ParentReference{Kind: &wrongKind, Name: routeParentTestGatewayName, SectionName: &section},
+		},
+		{
+			name:   "missing section",
+			parent: gatewayv1.ParentReference{Name: routeParentTestGatewayName},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parentReferenceTargetsGateway(tt.parent, routeParentTestNamespace, binding); got != tt.want {
+				t.Errorf("parentReferenceTargetsGateway() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRouteAcceptedDoesNotBorrowStatusFromAnotherGatewayParent(t *testing.T) {
+	section := gatewayv1.SectionName(routeParentTestSectionName)
+	otherNamespace := gatewayv1.Namespace("other")
+	binding := &kflaredv1alpha1.CloudflareTunnelBinding{
+		ObjectMeta: metav1.ObjectMeta{Namespace: routeParentTestNamespace},
+		Spec: kflaredv1alpha1.CloudflareTunnelBindingSpec{
+			GatewayRef: kflaredv1alpha1.GatewayReference{Name: routeParentTestGatewayName, SectionName: routeParentTestSectionName},
+		},
+	}
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Namespace: routeParentTestNamespace, Generation: 1},
+		Spec: gatewayv1.HTTPRouteSpec{CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: []gatewayv1.ParentReference{{
+			Name: routeParentTestGatewayName, SectionName: &section,
+		}}}},
+		Status: gatewayv1.HTTPRouteStatus{RouteStatus: gatewayv1.RouteStatus{Parents: []gatewayv1.RouteParentStatus{{
+			ParentRef:      gatewayv1.ParentReference{Name: routeParentTestGatewayName, Namespace: &otherNamespace, SectionName: &section},
+			ControllerName: gatewayv1.GatewayController(traefikControllerName),
+			Conditions:     []metav1.Condition{currentCondition("Accepted", metav1.ConditionTrue), currentCondition("ResolvedRefs", metav1.ConditionTrue)},
+		}}}},
+	}
+
+	if !routeTargetsBinding(route, binding) {
+		t.Fatal("route should target the selected local Gateway")
+	}
+	if routeAccepted(route, binding) {
+		t.Fatal("route should not borrow accepted status from a Gateway parent in another namespace")
 	}
 }
 

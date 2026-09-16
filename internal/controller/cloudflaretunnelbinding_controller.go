@@ -668,11 +668,7 @@ func resolveServicePort(service *corev1.Service, requested intstr.IntOrString) (
 
 func routeTargetsBinding(route *gatewayv1.HTTPRoute, binding *kflaredv1alpha1.CloudflareTunnelBinding) bool {
 	for _, parent := range route.Spec.ParentRefs {
-		groupMatches := parent.Group == nil || *parent.Group == gatewayv1.Group(gatewayv1.GroupName)
-		kindMatches := parent.Kind == nil || *parent.Kind == gatewayv1.Kind("Gateway")
-		namespaceMatches := parent.Namespace == nil || string(*parent.Namespace) == binding.Namespace
-		sectionMatches := parent.SectionName != nil && string(*parent.SectionName) == binding.Spec.GatewayRef.SectionName
-		if groupMatches && kindMatches && namespaceMatches && sectionMatches && string(parent.Name) == binding.Spec.GatewayRef.Name {
+		if parentReferenceTargetsGateway(parent, route.Namespace, binding) {
 			return true
 		}
 	}
@@ -684,13 +680,33 @@ func routeAccepted(route *gatewayv1.HTTPRoute, binding *kflaredv1alpha1.Cloudfla
 		if parent.ControllerName != gatewayv1.GatewayController(traefikControllerName) {
 			continue
 		}
-		sectionMatches := parent.ParentRef.SectionName != nil && string(*parent.ParentRef.SectionName) == binding.Spec.GatewayRef.SectionName
-		if string(parent.ParentRef.Name) == binding.Spec.GatewayRef.Name && sectionMatches &&
+		if parentReferenceTargetsGateway(parent.ParentRef, route.Namespace, binding) &&
 			conditionTrue(parent.Conditions, route.Generation, "Accepted") && conditionTrue(parent.Conditions, route.Generation, "ResolvedRefs") {
 			return true
 		}
 	}
 	return false
+}
+
+func parentReferenceTargetsGateway(parent gatewayv1.ParentReference, routeNamespace string, binding *kflaredv1alpha1.CloudflareTunnelBinding) bool {
+	group := gatewayv1.Group(gatewayv1.GroupName)
+	if parent.Group != nil {
+		group = *parent.Group
+	}
+	kind := gatewayv1.Kind("Gateway")
+	if parent.Kind != nil {
+		kind = *parent.Kind
+	}
+	namespace := gatewayv1.Namespace(routeNamespace)
+	if parent.Namespace != nil {
+		namespace = *parent.Namespace
+	}
+
+	return group == gatewayv1.Group(gatewayv1.GroupName) &&
+		kind == gatewayv1.Kind("Gateway") &&
+		string(namespace) == binding.Namespace &&
+		string(parent.Name) == binding.Spec.GatewayRef.Name &&
+		parent.SectionName != nil && string(*parent.SectionName) == binding.Spec.GatewayRef.SectionName
 }
 
 func effectiveReplicas(value int32) int32 {
