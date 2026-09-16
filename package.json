@@ -1,0 +1,18 @@
+{
+  "name": "kflared",
+  "version": "0.0.0",
+  "description": "Gateway controller for Cloudflare Tunnel.",
+  "private": true,
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kode-blox/kflared.git"
+  },
+  "homepage": "https://kflared.kodeblox.com",
+  "bugs": {
+    "url": "https://github.com/kode-blox/kflared/issues"
+  },
+  "workspaces": [
+    "docs"
+  ]
+}

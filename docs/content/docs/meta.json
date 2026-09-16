@@ -1,0 +1,15 @@
+{
+  "title": "KFlared Docs",
+  "pages": [
+    "---Get started---",
+    "installation",
+    "configuration",
+    "---Understand KFlared---",
+    "architecture",
+    "security",
+    "language-and-foundations",
+    "---Operate and develop---",
+    "operations",
+    "testing"
+  ]
+}

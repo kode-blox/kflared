@@ -13,7 +13,7 @@ Cloudflare edge
   -> workload Services
 ```
 
-See [the architecture](docs/architecture.md), [security model](SECURITY.md), and [ADRs](docs/adr/) before operating the controller.
+See the [KFlared documentation](https://kflared.kodeblox.com), [architecture](docs/content/docs/architecture.md), and [security model](SECURITY.md) before operating the controller.
 
 ## MVP scope
 
@@ -81,7 +81,7 @@ go1.27.0 test ./...
 go1.27.0 build ./cmd
 ```
 
-Generated code and manifests remain Kubebuilder-controlled. Use the pinned controller-gen version from `Taskfile.yaml` and verify the resulting diff. See [testing](docs/testing.md).
+Generated code and manifests remain Kubebuilder-controlled. Use the pinned controller-gen version from `Taskfile.yaml` and verify the resulting diff. See [testing](docs/content/docs/testing.md).
 
 The supported Helm chart is rooted at [`charts`](charts). It combines the current Helm starter structure with the controller resources derived from Kubebuilder's Kustomize output. Its plain CRDs live in Helm's special `charts/crds/` directory; pass `--include-crds` when rendering the complete chart.
 
