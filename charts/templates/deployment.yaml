@@ -45,7 +45,7 @@ spec:
       containers:
         - name: manager
           command:
-            - /kflared
+            - /app/kflared
           args:
             {{- if .Values.leaderElection.enabled }}
             - --leader-elect
