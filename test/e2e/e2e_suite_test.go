@@ -23,6 +23,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -51,12 +53,17 @@ func TestE2E(t *testing.T) {
 }
 
 func taskCommand(arguments ...string) *exec.Cmd {
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		panic("could not resolve the e2e suite source path")
+	}
+	taskScript := filepath.Join(filepath.Dir(sourceFile), "..", "..", "task.ps1")
 	taskArguments := []string{
 		"-NoLogo",
 		"-NoProfile",
 		"-NonInteractive",
 		"-File",
-		"../../task.ps1",
+		taskScript,
 	}
 	taskArguments = append(taskArguments, arguments...)
 
