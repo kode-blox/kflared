@@ -127,16 +127,16 @@ func currentCondition(conditionType string) metav1.Condition {
 	return metav1.Condition{Type: conditionType, Status: metav1.ConditionTrue, Reason: "Test", ObservedGeneration: 1, LastTransitionTime: metav1.Now()}
 }
 
-func readyProvider() *kflaredv1alpha1.CloudflareProvider {
-	return &kflaredv1alpha1.CloudflareProvider{
+func readyClusterProvider() *kflaredv1alpha1.ClusterCloudflareProvider {
+	return &kflaredv1alpha1.ClusterCloudflareProvider{
 		Name: testDefaultName, Generation: 1,
-		Spec: kflaredv1alpha1.CloudflareProviderSpec{
+		Spec: kflaredv1alpha1.ClusterCloudflareProviderSpec{
 			AccountID:                "0123456789abcdef0123456789abcdef",
 			APITokenSecretRef:        kflaredv1alpha1.SecretKeyReference{Name: testAPITokenSecretName, Key: testAPITokenSecretKey},
 			AllowedDNSZones:          []string{"example.com"},
 			BindingNamespaceSelector: metav1.LabelSelector{MatchLabels: map[string]string{testTenantName: "allowed"}},
 		},
-		Status: kflaredv1alpha1.CloudflareProviderStatus{ObservedGeneration: 1, Conditions: []metav1.Condition{
+		Status: kflaredv1alpha1.ClusterCloudflareProviderStatus{ObservedGeneration: 1, Conditions: []metav1.Condition{
 			currentCondition(kflaredv1alpha1.ProviderConditionAccepted),
 			currentCondition(kflaredv1alpha1.ProviderConditionCredentialsValid),
 		}},

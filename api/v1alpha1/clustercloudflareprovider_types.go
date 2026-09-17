@@ -36,15 +36,15 @@ type SecretKeyReference struct {
 	Key string `json:"key"`
 }
 
-// CloudflareProviderSpec defines a Cloudflare account and the tenants allowed to use it.
-type CloudflareProviderSpec struct {
+// ClusterCloudflareProviderSpec defines a Cloudflare account and the tenants allowed to use it.
+type ClusterCloudflareProviderSpec struct {
 	// accountID is the Cloudflare account identifier.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=32
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="accountID is immutable"
 	AccountID string `json:"accountID"`
 
-	// apiTokenSecretRef refers to a Secret in kflared-system.
+	// apiTokenSecretRef refers to a Secret in the KFlared system namespace.
 	APITokenSecretRef SecretKeyReference `json:"apiTokenSecretRef"`
 
 	// allowedDNSZones is the explicit set of DNS suffixes this provider may publish.
@@ -57,8 +57,8 @@ type CloudflareProviderSpec struct {
 	BindingNamespaceSelector metav1.LabelSelector `json:"bindingNamespaceSelector"`
 }
 
-// CloudflareProviderStatus defines the observed provider state.
-type CloudflareProviderStatus struct {
+// ClusterCloudflareProviderStatus defines the observed provider state.
+type ClusterCloudflareProviderStatus struct {
 	// observedGeneration is the most recent generation processed by the controller.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -72,32 +72,32 @@ type CloudflareProviderStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Cluster,shortName=cfp
+// +kubebuilder:resource:scope=Cluster,shortName=ccfp
 // +kubebuilder:printcolumn:name="Accepted",type=string,JSONPath=".status.conditions[?(@.type=='Accepted')].status"
 // +kubebuilder:printcolumn:name="Credentials",type=string,JSONPath=".status.conditions[?(@.type=='CredentialsValid')].status"
 
-// CloudflareProvider is the Schema for the cloudflareproviders API.
-type CloudflareProvider struct {
+// ClusterCloudflareProvider is the Schema for the clustercloudflareproviders API.
+type ClusterCloudflareProvider struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec CloudflareProviderSpec `json:"spec"`
+	Spec ClusterCloudflareProviderSpec `json:"spec"`
 	// +optional
-	Status CloudflareProviderStatus `json:"status,omitempty"`
+	Status ClusterCloudflareProviderStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// CloudflareProviderList contains a list of CloudflareProvider.
-type CloudflareProviderList struct {
+// ClusterCloudflareProviderList contains a list of ClusterCloudflareProvider.
+type ClusterCloudflareProviderList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []CloudflareProvider `json:"items"`
+	Items           []ClusterCloudflareProvider `json:"items"`
 }
 
 func init() {
 	SchemeBuilder.Register(func(s *runtime.Scheme) error {
-		s.AddKnownTypes(SchemeGroupVersion, &CloudflareProvider{}, &CloudflareProviderList{})
+		s.AddKnownTypes(SchemeGroupVersion, &ClusterCloudflareProvider{}, &ClusterCloudflareProviderList{})
 		return nil
 	})
 }

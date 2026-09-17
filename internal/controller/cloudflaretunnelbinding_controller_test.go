@@ -90,7 +90,7 @@ func TestBindingReconcileCreatesIdempotentTunnelAndHardenedConnectors(t *testing
 	scheme := bindingTestScheme(t)
 	objects, binding := validBindingObjects()
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
-		WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.CloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}, &appsv1.Deployment{}).
+		WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.ClusterCloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}, &appsv1.Deployment{}).
 		WithObjects(objects...).Build()
 	cloudflare := &fakeCloudflareClient{token: testConnectorToken}
 	reconciler := &CloudflareTunnelBindingReconciler{Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: cloudflare}}
@@ -152,7 +152,7 @@ func TestBindingDeprogramsTunnelWhenItLosesEligibility(t *testing.T) {
 		}
 	}
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
-		WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.CloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}).
+		WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.ClusterCloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}).
 		WithObjects(objects...).Build()
 	cloudflare := &fakeCloudflareClient{
 		token:         testConnectorToken,
@@ -191,14 +191,14 @@ func TestBindingRejectsCurrentProviderFailure(t *testing.T) {
 			scheme := bindingTestScheme(t)
 			objects, binding := validBindingObjects()
 			setPublishedBindingStatus(binding)
-			provider := bindingTestProvider(t, objects)
+			provider := bindingTestClusterProvider(t, objects)
 			condition := apiMeta.FindStatusCondition(provider.Status.Conditions, tt.conditionType)
 			if condition == nil {
 				t.Fatalf("provider condition %q is missing", tt.conditionType)
 			}
 			condition.Status = metav1.ConditionFalse
 			kubeClient := fake.NewClientBuilder().WithScheme(scheme).
-				WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.CloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}).
+				WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.ClusterCloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}).
 				WithObjects(objects...).Build()
 			cloudflare := &fakeCloudflareClient{
 				tunnel:        &cfclient.Tunnel{ID: binding.Status.TunnelID, Name: binding.Status.TunnelName, ConfigSource: cfclient.ConfigSourceCloudflare},
@@ -229,23 +229,23 @@ func TestBindingRejectsCurrentProviderFailure(t *testing.T) {
 func TestBindingPreservesWorkingTunnelWhileProviderCredentialsAreIndeterminate(t *testing.T) {
 	tests := []struct {
 		name   string
-		mutate func(*kflaredv1alpha1.CloudflareProvider)
+		mutate func(*kflaredv1alpha1.ClusterCloudflareProvider)
 	}{
 		{
 			name: "unknown",
-			mutate: func(provider *kflaredv1alpha1.CloudflareProvider) {
+			mutate: func(provider *kflaredv1alpha1.ClusterCloudflareProvider) {
 				apiMeta.FindStatusCondition(provider.Status.Conditions, kflaredv1alpha1.ProviderConditionCredentialsValid).Status = metav1.ConditionUnknown
 			},
 		},
 		{
 			name: "stale",
-			mutate: func(provider *kflaredv1alpha1.CloudflareProvider) {
+			mutate: func(provider *kflaredv1alpha1.ClusterCloudflareProvider) {
 				apiMeta.FindStatusCondition(provider.Status.Conditions, kflaredv1alpha1.ProviderConditionCredentialsValid).ObservedGeneration = provider.Generation - 1
 			},
 		},
 		{
 			name: "missing",
-			mutate: func(provider *kflaredv1alpha1.CloudflareProvider) {
+			mutate: func(provider *kflaredv1alpha1.ClusterCloudflareProvider) {
 				provider.Status.Conditions = slices.DeleteFunc(provider.Status.Conditions, func(condition metav1.Condition) bool {
 					return condition.Type == kflaredv1alpha1.ProviderConditionCredentialsValid
 				})
@@ -257,11 +257,11 @@ func TestBindingPreservesWorkingTunnelWhileProviderCredentialsAreIndeterminate(t
 			scheme := bindingTestScheme(t)
 			objects, binding := validBindingObjects()
 			setPublishedBindingStatus(binding)
-			tt.mutate(bindingTestProvider(t, objects))
+			tt.mutate(bindingTestClusterProvider(t, objects))
 			expectedStatus := binding.DeepCopy().Status
 			initialConfiguration := []cfclient.IngressRule{{Hostname: testApplicationHostname, Service: testOldOrigin}, {Service: testNotFoundOrigin}}
 			kubeClient := fake.NewClientBuilder().WithScheme(scheme).
-				WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.CloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}).
+				WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.ClusterCloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}).
 				WithObjects(objects...).Build()
 			cloudflare := &fakeCloudflareClient{
 				tunnel:        &cfclient.Tunnel{ID: binding.Status.TunnelID, Name: binding.Status.TunnelName, ConfigSource: cfclient.ConfigSourceCloudflare},
@@ -271,7 +271,7 @@ func TestBindingPreservesWorkingTunnelWhileProviderCredentialsAreIndeterminate(t
 			request := ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}
 
 			result, err := reconciler.Reconcile(context.Background(), request)
-			if !errors.Is(err, errProviderStatusUnknown) {
+			if !errors.Is(err, errClusterProviderStatusUnknown) {
 				t.Fatalf("Reconcile() error = %v, want provider status error", err)
 			}
 			if result != (ctrl.Result{}) {
@@ -284,7 +284,7 @@ func TestBindingPreservesWorkingTunnelWhileProviderCredentialsAreIndeterminate(t
 				t.Fatalf("Cloudflare configuration changed: %#v", cloudflare.configuration)
 			}
 
-			actual := assertOperationalFailureStatus(t, kubeClient, request.NamespacedName, expectedStatus, kflaredv1alpha1.BindingConditionReady, "ProviderStatusUnknown", "The referenced CloudflareProvider status is not currently known")
+			actual := assertOperationalFailureStatus(t, kubeClient, request.NamespacedName, expectedStatus, kflaredv1alpha1.BindingConditionReady, "ProviderStatusUnknown", "The referenced ClusterCloudflareProvider status is not currently known")
 			programmed := apiMeta.FindStatusCondition(actual.Status.Conditions, kflaredv1alpha1.BindingConditionProgrammed)
 			if programmed == nil || programmed.Status != metav1.ConditionTrue {
 				t.Fatalf("Programmed condition = %#v, want unchanged True", programmed)
@@ -396,7 +396,7 @@ func TestBindingReportsOperationalReconciliationFailures(t *testing.T) {
 				tt.cloudflareFailure(cloudflare, failure)
 			}
 			baseClient := fake.NewClientBuilder().WithScheme(scheme).
-				WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.CloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}, &appsv1.Deployment{}).
+				WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.ClusterCloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}, &appsv1.Deployment{}).
 				WithObjects(objects...).Build()
 			var kubeClient client.Client = baseClient
 			if tt.objectFailure != nil {
@@ -649,14 +649,14 @@ func bindingTestRESTMapper() apiMeta.RESTMapper {
 	return mapper
 }
 
-func bindingTestProvider(t *testing.T, objects []client.Object) *kflaredv1alpha1.CloudflareProvider {
+func bindingTestClusterProvider(t *testing.T, objects []client.Object) *kflaredv1alpha1.ClusterCloudflareProvider {
 	t.Helper()
 	for _, object := range objects {
-		if provider, ok := object.(*kflaredv1alpha1.CloudflareProvider); ok {
+		if provider, ok := object.(*kflaredv1alpha1.ClusterCloudflareProvider); ok {
 			return provider
 		}
 	}
-	t.Fatal("test objects do not contain a CloudflareProvider")
+	t.Fatal("test objects do not contain a ClusterCloudflareProvider")
 	return nil
 }
 
@@ -812,7 +812,7 @@ func validBindingObjects() ([]client.Object, *kflaredv1alpha1.CloudflareTunnelBi
 		}}}},
 	}
 	return []client.Object{
-		readyProvider(),
+		readyClusterProvider(),
 		binding,
 		&corev1.Namespace{Name: testTenantName, Labels: map[string]string{testTenantName: "allowed"}},
 		&corev1.Namespace{Name: metav1.NamespaceSystem, UID: types.UID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")},

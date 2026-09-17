@@ -4,16 +4,16 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.22.0
-  name: cloudflareproviders.kflared.kodeblox.com
+  name: clustercloudflareproviders.kflared.kodeblox.com
 spec:
   group: kflared.kodeblox.com
   names:
-    kind: CloudflareProvider
-    listKind: CloudflareProviderList
-    plural: cloudflareproviders
+    kind: ClusterCloudflareProvider
+    listKind: ClusterCloudflareProviderList
+    plural: clustercloudflareproviders
     shortNames:
-    - cfp
-    singular: cloudflareprovider
+    - ccfp
+    singular: clustercloudflareprovider
   scope: Cluster
   versions:
   - additionalPrinterColumns:
@@ -26,7 +26,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: CloudflareProvider is the Schema for the cloudflareproviders
+        description: ClusterCloudflareProvider is the Schema for the clustercloudflareproviders
           API.
         properties:
           apiVersion:
@@ -47,8 +47,8 @@ spec:
           metadata:
             type: object
           spec:
-            description: CloudflareProviderSpec defines a Cloudflare account and the
-              tenants allowed to use it.
+            description: ClusterCloudflareProviderSpec defines a Cloudflare account
+              and the tenants allowed to use it.
             properties:
               accountID:
                 description: accountID is the Cloudflare account identifier.
@@ -67,7 +67,8 @@ spec:
                 type: array
                 x-kubernetes-list-type: set
               apiTokenSecretRef:
-                description: apiTokenSecretRef refers to a Secret in kflared-system.
+                description: apiTokenSecretRef refers to a Secret in the KFlared system
+                  namespace.
                 properties:
                   key:
                     description: key is the Secret data key containing the API token.
@@ -136,7 +137,8 @@ spec:
             - bindingNamespaceSelector
             type: object
           status:
-            description: CloudflareProviderStatus defines the observed provider state.
+            description: ClusterCloudflareProviderStatus defines the observed provider
+              state.
             properties:
               conditions:
                 description: conditions report provider validation and credential

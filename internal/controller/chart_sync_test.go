@@ -29,8 +29,8 @@ func TestHelmCRDsMatchGeneratedManifests(t *testing.T) {
 		chart     string
 	}{
 		{
-			generated: filepath.Join("..", "..", "config", "crd", "bases", "kflared.kodeblox.com_cloudflareproviders.yaml"),
-			chart:     filepath.Join("..", "..", "charts", "crds", "kflared.kodeblox.com_cloudflareproviders.yaml"),
+			generated: filepath.Join("..", "..", "config", "crd", "bases", "kflared.kodeblox.com_clustercloudflareproviders.yaml"),
+			chart:     filepath.Join("..", "..", "charts", "crds", "kflared.kodeblox.com_clustercloudflareproviders.yaml"),
 		},
 		{
 			generated: filepath.Join("..", "..", "config", "crd", "bases", "kflared.kodeblox.com_cloudflaretunnelbindings.yaml"),

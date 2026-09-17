@@ -8,7 +8,7 @@ KFlared uses standard Kubernetes status conditions and owner references. Start e
 ## Observe provider and binding health
 
 ```sh
-kubectl get cloudflareproviders
+kubectl get clustercloudflareproviders
 kubectl -n my-app get cloudflaretunnelbindings
 kubectl -n my-app get cloudflaretunnelbinding public -o yaml
 ```

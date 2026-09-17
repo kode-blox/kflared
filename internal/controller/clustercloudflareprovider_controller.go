@@ -39,25 +39,25 @@ import (
 )
 
 const (
-	defaultSystemNamespace = "kflared-system"
-	providerFinalizer      = "kflared.kodeblox.com/provider-protection"
+	defaultSystemNamespace   = "kflared-system"
+	clusterProviderFinalizer = "kflared.kodeblox.com/cluster-provider-protection"
 )
 
-// CloudflareProviderReconciler reconciles a CloudflareProvider object.
-type CloudflareProviderReconciler struct {
+// ClusterCloudflareProviderReconciler reconciles a ClusterCloudflareProvider object.
+type ClusterCloudflareProviderReconciler struct {
 	client.Client
 	Scheme          *runtime.Scheme
 	Cloudflare      cfclient.Factory
 	SystemNamespace string
 }
 
-// +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=cloudflareproviders,verbs=get;list;watch
-// +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=cloudflareproviders/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=cloudflareproviders/finalizers,verbs=update
+// +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=clustercloudflareproviders,verbs=get;list;watch
+// +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=clustercloudflareproviders/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=clustercloudflareproviders/finalizers,verbs=update
 // +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=cloudflaretunnelbindings,verbs=get;list;watch
 
-func (r *CloudflareProviderReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	provider := &kflaredv1alpha1.CloudflareProvider{}
+func (r *ClusterCloudflareProviderReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	provider := &kflaredv1alpha1.ClusterCloudflareProvider{}
 	if err := r.Get(ctx, req.NamespacedName, provider); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -65,8 +65,8 @@ func (r *CloudflareProviderReconciler) Reconcile(ctx context.Context, req ctrl.R
 	if !provider.DeletionTimestamp.IsZero() {
 		return r.finalize(ctx, provider)
 	}
-	if !controllerutil.ContainsFinalizer(provider, providerFinalizer) {
-		controllerutil.AddFinalizer(provider, providerFinalizer)
+	if !controllerutil.ContainsFinalizer(provider, clusterProviderFinalizer) {
+		controllerutil.AddFinalizer(provider, clusterProviderFinalizer)
 		if err := r.Update(ctx, provider); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -124,8 +124,8 @@ func (r *CloudflareProviderReconciler) Reconcile(ctx context.Context, req ctrl.R
 	return ctrl.Result{RequeueAfter: 10 * time.Minute}, r.Status().Patch(ctx, provider, client.MergeFrom(statusBase))
 }
 
-func (r *CloudflareProviderReconciler) finalize(ctx context.Context, provider *kflaredv1alpha1.CloudflareProvider) (ctrl.Result, error) {
-	if !controllerutil.ContainsFinalizer(provider, providerFinalizer) {
+func (r *ClusterCloudflareProviderReconciler) finalize(ctx context.Context, provider *kflaredv1alpha1.ClusterCloudflareProvider) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(provider, clusterProviderFinalizer) {
 		return ctrl.Result{}, nil
 	}
 	bindings := &kflaredv1alpha1.CloudflareTunnelBindingList{}
@@ -137,11 +137,11 @@ func (r *CloudflareProviderReconciler) finalize(ctx context.Context, provider *k
 			return ctrl.Result{}, fmt.Errorf("provider is still referenced by CloudflareTunnelBinding %s/%s", bindings.Items[i].Namespace, bindings.Items[i].Name)
 		}
 	}
-	controllerutil.RemoveFinalizer(provider, providerFinalizer)
+	controllerutil.RemoveFinalizer(provider, clusterProviderFinalizer)
 	return ctrl.Result{}, r.Update(ctx, provider)
 }
 
-func (r *CloudflareProviderReconciler) NamespaceAllowed(provider *kflaredv1alpha1.CloudflareProvider, namespace *corev1.Namespace) (bool, error) {
+func (r *ClusterCloudflareProviderReconciler) NamespaceAllowed(provider *kflaredv1alpha1.ClusterCloudflareProvider, namespace *corev1.Namespace) (bool, error) {
 	selector, err := metav1.LabelSelectorAsSelector(&provider.Spec.BindingNamespaceSelector)
 	if err != nil {
 		return false, err
@@ -149,23 +149,23 @@ func (r *CloudflareProviderReconciler) NamespaceAllowed(provider *kflaredv1alpha
 	return selector.Matches(labels.Set(namespace.Labels)), nil
 }
 
-func (r *CloudflareProviderReconciler) cloudflare() cfclient.Factory {
+func (r *ClusterCloudflareProviderReconciler) cloudflare() cfclient.Factory {
 	if r.Cloudflare == nil {
 		return cfclient.SDKFactory{}
 	}
 	return r.Cloudflare
 }
 
-func (r *CloudflareProviderReconciler) systemNamespace() string {
+func (r *ClusterCloudflareProviderReconciler) systemNamespace() string {
 	if r.SystemNamespace == "" {
 		return defaultSystemNamespace
 	}
 	return r.SystemNamespace
 }
 
-func (r *CloudflareProviderReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *ClusterCloudflareProviderReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&kflaredv1alpha1.CloudflareProvider{}).
-		Named("cloudflareprovider").
+		For(&kflaredv1alpha1.ClusterCloudflareProvider{}).
+		Named("clustercloudflareprovider").
 		Complete(r)
 }

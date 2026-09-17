@@ -1,15 +1,15 @@
 ---
 title: Configuration
-description: Configure CloudflareProvider and CloudflareTunnelBinding resources safely.
+description: Configure ClusterCloudflareProvider and CloudflareTunnelBinding resources safely.
 ---
 
-KFlared exposes two `kflared.kodeblox.com/v1alpha1` custom resources. A cluster-scoped `CloudflareProvider` defines an administrator-owned Cloudflare account boundary. A namespaced `CloudflareTunnelBinding` publishes one listener of one Traefik-managed Gateway.
+KFlared exposes two `kflared.kodeblox.com/v1alpha1` custom resources. A cluster-scoped `ClusterCloudflareProvider` defines an administrator-owned Cloudflare account boundary. A namespaced `CloudflareTunnelBinding` publishes one listener of one Traefik-managed Gateway.
 
-## CloudflareProvider
+## ClusterCloudflareProvider
 
 ```yaml
 apiVersion: kflared.kodeblox.com/v1alpha1
-kind: CloudflareProvider
+kind: ClusterCloudflareProvider
 metadata:
   name: default
 spec:

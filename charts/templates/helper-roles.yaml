@@ -1,7 +1,7 @@
 {{- if and .Values.rbac.create .Values.rbac.helperRoles.enabled }}
 {{- $root := . }}
-{{- range $kind := list "cloudflareproviders" "cloudflaretunnelbindings" }}
-{{- $short := ternary "cloudflareprovider" "cloudflaretunnelbinding" (eq $kind "cloudflareproviders") }}
+{{- range $kind := list "clustercloudflareproviders" "cloudflaretunnelbindings" }}
+{{- $short := ternary "clustercloudflareprovider" "cloudflaretunnelbinding" (eq $kind "clustercloudflareproviders") }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

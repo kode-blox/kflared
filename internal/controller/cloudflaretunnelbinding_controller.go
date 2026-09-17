@@ -64,7 +64,7 @@ const (
 	maxConnectorReplicas     = int32(10)
 )
 
-var errProviderStatusUnknown = errors.New("CloudflareProvider status is not currently known")
+var errClusterProviderStatusUnknown = errors.New("ClusterCloudflareProvider status is not currently known")
 
 // CloudflareTunnelBindingReconciler reconciles a CloudflareTunnelBinding object.
 type CloudflareTunnelBindingReconciler struct {
@@ -80,7 +80,7 @@ type CloudflareTunnelBindingReconciler struct {
 // +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=cloudflaretunnelbindings,verbs=get;list;watch
 // +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=cloudflaretunnelbindings/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=cloudflaretunnelbindings/finalizers,verbs=update
-// +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=cloudflareproviders,verbs=get;list;watch
+// +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=clustercloudflareproviders,verbs=get;list;watch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gatewayclasses;gateways;httproutes;referencegrants,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=namespaces;services,verbs=get;list;watch
 // +kubebuilder:rbac:groups=externaldns.k8s.io,resources=dnsendpoints,verbs=get;create;update;patch;delete
@@ -105,8 +105,8 @@ func (r *CloudflareTunnelBindingReconciler) Reconcile(ctx context.Context, req c
 			}
 			return *result, err
 		}
-		if errors.Is(err, errProviderStatusUnknown) {
-			return ctrl.Result{}, r.reportOperationalFailure(ctx, binding, kflaredv1alpha1.BindingConditionReady, "ProviderStatusUnknown", "The referenced CloudflareProvider status is not currently known", err)
+		if errors.Is(err, errClusterProviderStatusUnknown) {
+			return ctrl.Result{}, r.reportOperationalFailure(ctx, binding, kflaredv1alpha1.BindingConditionReady, "ProviderStatusUnknown", "The referenced ClusterCloudflareProvider status is not currently known", err)
 		}
 		return ctrl.Result{}, r.reportOperationalFailure(ctx, binding, kflaredv1alpha1.BindingConditionProgrammed, "TunnelReconciliationFailed", "Tunnel reconciliation could not complete", err)
 	}
@@ -178,8 +178,8 @@ func (r *CloudflareTunnelBindingReconciler) Reconcile(ctx context.Context, req c
 	return ctrl.Result{RequeueAfter: 2 * time.Minute}, nil
 }
 
-func (r *CloudflareTunnelBindingReconciler) validateAndPlan(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding) (*kflaredv1alpha1.CloudflareProvider, []string, string, *ctrl.Result, error) {
-	provider, result, err := r.validateProvider(ctx, binding)
+func (r *CloudflareTunnelBindingReconciler) validateAndPlan(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding) (*kflaredv1alpha1.ClusterCloudflareProvider, []string, string, *ctrl.Result, error) {
+	provider, result, err := r.validateClusterProvider(ctx, binding)
 	if result != nil || err != nil {
 		return nil, nil, "", result, err
 	}
@@ -211,10 +211,10 @@ func (r *CloudflareTunnelBindingReconciler) validateAndPlan(ctx context.Context,
 	return provider, hostnames, origin, nil, nil
 }
 
-func (r *CloudflareTunnelBindingReconciler) validateProvider(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding) (*kflaredv1alpha1.CloudflareProvider, *ctrl.Result, error) {
-	provider := &kflaredv1alpha1.CloudflareProvider{}
+func (r *CloudflareTunnelBindingReconciler) validateClusterProvider(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding) (*kflaredv1alpha1.ClusterCloudflareProvider, *ctrl.Result, error) {
+	provider := &kflaredv1alpha1.ClusterCloudflareProvider{}
 	if err := r.Get(ctx, types.NamespacedName{Name: binding.Spec.ProviderRef.Name}, provider); err != nil {
-		_, _, _, result, rejectErr := r.rejected(ctx, binding, "ProviderNotFound", "The referenced CloudflareProvider was not found", client.IgnoreNotFound(err))
+		_, _, _, result, rejectErr := r.rejected(ctx, binding, "ProviderNotFound", "The referenced ClusterCloudflareProvider was not found", client.IgnoreNotFound(err))
 		return nil, result, rejectErr
 	}
 	accepted := apiMeta.FindStatusCondition(provider.Status.Conditions, kflaredv1alpha1.ProviderConditionAccepted)
@@ -223,12 +223,12 @@ func (r *CloudflareTunnelBindingReconciler) validateProvider(ctx context.Context
 	credentialsCurrent := credentialsValid != nil && credentialsValid.ObservedGeneration == provider.Generation
 	if (acceptedCurrent && accepted.Status == metav1.ConditionFalse) ||
 		(credentialsCurrent && credentialsValid.Status == metav1.ConditionFalse) {
-		_, _, _, result, rejectErr := r.rejected(ctx, binding, "ProviderNotReady", "The referenced CloudflareProvider is not ready", nil)
+		_, _, _, result, rejectErr := r.rejected(ctx, binding, "ProviderNotReady", "The referenced ClusterCloudflareProvider is not ready", nil)
 		return nil, result, rejectErr
 	}
 	if !acceptedCurrent || accepted.Status != metav1.ConditionTrue ||
 		!credentialsCurrent || credentialsValid.Status != metav1.ConditionTrue {
-		return nil, nil, fmt.Errorf("%w: %q", errProviderStatusUnknown, provider.Name)
+		return nil, nil, fmt.Errorf("%w: %q", errClusterProviderStatusUnknown, provider.Name)
 	}
 	namespace := &corev1.Namespace{}
 	if err := r.Get(ctx, types.NamespacedName{Name: binding.Namespace}, namespace); err != nil {
@@ -471,7 +471,7 @@ func (r *CloudflareTunnelBindingReconciler) reportOperationalFailure(ctx context
 	return errors.Join(cause, patchErr)
 }
 
-func (r *CloudflareTunnelBindingReconciler) rejected(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding, reason, message string, cause error) (*kflaredv1alpha1.CloudflareProvider, []string, string, *ctrl.Result, error) {
+func (r *CloudflareTunnelBindingReconciler) rejected(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding, reason, message string, cause error) (*kflaredv1alpha1.ClusterCloudflareProvider, []string, string, *ctrl.Result, error) {
 	base := binding.DeepCopy()
 	binding.Status.ObservedGeneration = binding.Generation
 	binding.Status.PublishedHostnames = nil
@@ -487,7 +487,7 @@ func (r *CloudflareTunnelBindingReconciler) rejected(ctx context.Context, bindin
 }
 
 func (r *CloudflareTunnelBindingReconciler) deprogramTunnel(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding) error {
-	provider := &kflaredv1alpha1.CloudflareProvider{}
+	provider := &kflaredv1alpha1.ClusterCloudflareProvider{}
 	if err := r.Get(ctx, types.NamespacedName{Name: binding.Spec.ProviderRef.Name}, provider); err != nil {
 		return fmt.Errorf("read provider while deprogramming tunnel: %w", err)
 	}
@@ -534,7 +534,7 @@ func (r *CloudflareTunnelBindingReconciler) finalize(ctx context.Context, bindin
 		return ctrl.Result{}, err
 	}
 	if binding.Spec.DeletionPolicy != kflaredv1alpha1.DeletionPolicyRetain && binding.Status.TunnelID != "" {
-		provider := &kflaredv1alpha1.CloudflareProvider{}
+		provider := &kflaredv1alpha1.ClusterCloudflareProvider{}
 		if err := r.Get(ctx, types.NamespacedName{Name: binding.Spec.ProviderRef.Name}, provider); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -601,7 +601,7 @@ func (r *CloudflareTunnelBindingReconciler) hostnameWinner(ctx context.Context, 
 			continue
 		}
 		otherHostnames := slices.Clone(other.Status.PublishedHostnames)
-		provider := &kflaredv1alpha1.CloudflareProvider{}
+		provider := &kflaredv1alpha1.ClusterCloudflareProvider{}
 		if err := r.Get(ctx, types.NamespacedName{Name: other.Spec.ProviderRef.Name}, provider); err == nil &&
 			conditionTrue(provider.Status.Conditions, provider.Generation, kflaredv1alpha1.ProviderConditionAccepted) {
 			if candidates, listErr := r.acceptedRouteHostnames(ctx, other); listErr == nil {
@@ -619,7 +619,7 @@ func (r *CloudflareTunnelBindingReconciler) hostnameWinner(ctx context.Context, 
 	return nil, "", nil
 }
 
-func (r *CloudflareTunnelBindingReconciler) readAPIToken(ctx context.Context, provider *kflaredv1alpha1.CloudflareProvider) (string, error) {
+func (r *CloudflareTunnelBindingReconciler) readAPIToken(ctx context.Context, provider *kflaredv1alpha1.ClusterCloudflareProvider) (string, error) {
 	secret := &corev1.Secret{}
 	key := types.NamespacedName{Namespace: r.systemNamespace(), Name: provider.Spec.APITokenSecretRef.Name}
 	if err := r.Get(ctx, key, secret); err != nil {
@@ -662,7 +662,7 @@ func (r *CloudflareTunnelBindingReconciler) event(binding *kflaredv1alpha1.Cloud
 func (r *CloudflareTunnelBindingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&kflaredv1alpha1.CloudflareTunnelBinding{}).
-		Watches(&kflaredv1alpha1.CloudflareProvider{}, handler.EnqueueRequestsFromMapFunc(r.bindingsForObject)).
+		Watches(&kflaredv1alpha1.ClusterCloudflareProvider{}, handler.EnqueueRequestsFromMapFunc(r.bindingsForObject)).
 		Watches(&gatewayv1.GatewayClass{}, handler.EnqueueRequestsFromMapFunc(r.bindingsForObject)).
 		Watches(&gatewayv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(r.bindingsForObject)).
 		Watches(&gatewayv1.HTTPRoute{}, handler.EnqueueRequestsFromMapFunc(r.bindingsForObject)).
@@ -682,7 +682,7 @@ func (r *CloudflareTunnelBindingReconciler) bindingsForObject(ctx context.Contex
 		binding := &bindings.Items[i]
 		matches := false
 		switch changed := object.(type) {
-		case *kflaredv1alpha1.CloudflareProvider:
+		case *kflaredv1alpha1.ClusterCloudflareProvider:
 			matches = binding.Spec.ProviderRef.Name == changed.Name
 		case *gatewayv1.GatewayClass:
 			matches = true

@@ -3,7 +3,7 @@ title: Architecture
 description: Understand KFlared's integration boundary, traffic path, and ownership model.
 ---
 
-`CloudflareProvider` describes an account trust boundary. `CloudflareTunnelBinding` binds one listener of one Traefik-managed Gateway to one controller-owned, remotely managed Cloudflare Tunnel. A Gateway does not represent a tunnel in this integration mode.
+`ClusterCloudflareProvider` describes an account trust boundary. `CloudflareTunnelBinding` binds one listener of one Traefik-managed Gateway to one controller-owned, remotely managed Cloudflare Tunnel. A Gateway does not represent a tunnel in this integration mode.
 
 ```text
 Cloudflare edge

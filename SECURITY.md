@@ -2,7 +2,7 @@
 
 ## Credentials
 
-`CloudflareProvider.spec.apiTokenSecretRef` names one Secret and key in `kflared-system`. The reference cannot select another namespace. The manager's ClusterRole has no Secret access; a namespace Role grants only the operations needed in the system namespace. Sensitive resource reads bypass the shared cache so the manager does not require a cluster-wide Secret informer.
+`ClusterCloudflareProvider.spec.apiTokenSecretRef` names one Secret and key in `kflared-system`. The reference cannot select another namespace. The manager's ClusterRole has no Secret access; a namespace Role grants only the operations needed in the system namespace. Sensitive resource reads bypass the shared cache so the manager does not require a cluster-wide Secret informer.
 
 Use one least-privilege API token per operational trust boundary. The MVP needs account-scoped Cloudflare Tunnel/Connector write access and no DNS permission. Rotate the value in place; the provider's periodic credential check and binding reconciliation will observe it.
 

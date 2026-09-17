@@ -65,8 +65,8 @@ func TestCRDDefaultsAndImmutableOwnershipFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	provider := readyProvider()
-	provider.Status = kflaredv1alpha1.CloudflareProviderStatus{}
+	provider := readyClusterProvider()
+	provider.Status = kflaredv1alpha1.ClusterCloudflareProviderStatus{}
 	if err := kubeClient.Create(ctx, provider); err != nil {
 		t.Fatalf("create provider: %v", err)
 	}

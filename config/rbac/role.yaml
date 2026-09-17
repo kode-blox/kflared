@@ -44,8 +44,8 @@ rules:
 - apiGroups:
   - kflared.kodeblox.com
   resources:
-  - cloudflareproviders
   - cloudflaretunnelbindings
+  - clustercloudflareproviders
   verbs:
   - get
   - list
@@ -53,15 +53,15 @@ rules:
 - apiGroups:
   - kflared.kodeblox.com
   resources:
-  - cloudflareproviders/finalizers
   - cloudflaretunnelbindings/finalizers
+  - clustercloudflareproviders/finalizers
   verbs:
   - update
 - apiGroups:
   - kflared.kodeblox.com
   resources:
-  - cloudflareproviders/status
   - cloudflaretunnelbindings/status
+  - clustercloudflareproviders/status
   verbs:
   - get
   - patch

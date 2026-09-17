@@ -1,5 +1,5 @@
 apiVersion: kflared.kodeblox.com/v1alpha1
-kind: CloudflareProvider
+kind: ClusterCloudflareProvider
 metadata:
   labels:
     app.kubernetes.io/name: kflared

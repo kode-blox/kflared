@@ -199,13 +199,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.CloudflareProviderReconciler{
+	if err := (&controller.ClusterCloudflareProviderReconciler{
 		Client:          mgr.GetClient(),
 		Scheme:          mgr.GetScheme(),
 		Cloudflare:      cfclient.SDKFactory{},
 		SystemNamespace: systemNamespace,
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "cloudflareprovider")
+		setupLog.Error(err, "Failed to create controller", "controller", "clustercloudflareprovider")
 		os.Exit(1)
 	}
 	if err := (&controller.CloudflareTunnelBindingReconciler{

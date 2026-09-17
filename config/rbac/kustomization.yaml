@@ -27,6 +27,6 @@ resources:
 - cloudflaretunnelbinding_admin_role.yaml
 - cloudflaretunnelbinding_editor_role.yaml
 - cloudflaretunnelbinding_viewer_role.yaml
-- cloudflareprovider_admin_role.yaml
-- cloudflareprovider_editor_role.yaml
-- cloudflareprovider_viewer_role.yaml
+- clustercloudflareprovider_admin_role.yaml
+- clustercloudflareprovider_editor_role.yaml
+- clustercloudflareprovider_viewer_role.yaml

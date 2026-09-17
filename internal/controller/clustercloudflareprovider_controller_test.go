@@ -43,15 +43,15 @@ func TestProviderReconcileValidatesCredentials(t *testing.T) {
 	if err := kflaredv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	provider := readyProvider()
+	provider := readyClusterProvider()
 	provider.Finalizers = nil
-	provider.Status = kflaredv1alpha1.CloudflareProviderStatus{}
+	provider.Status = kflaredv1alpha1.ClusterCloudflareProviderStatus{}
 	secret := &corev1.Secret{
 		Name: testAPITokenSecretName, Namespace: defaultSystemNamespace,
 		Data: map[string][]byte{testAPITokenSecretKey: []byte("secret-token")},
 	}
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(provider).WithObjects(provider, secret).Build()
-	reconciler := &CloudflareProviderReconciler{Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: &fakeCloudflareClient{}}}
+	reconciler := &ClusterCloudflareProviderReconciler{Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: &fakeCloudflareClient{}}}
 	request := ctrl.Request{Name: provider.Name}
 
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
@@ -61,7 +61,7 @@ func TestProviderReconcileValidatesCredentials(t *testing.T) {
 		t.Fatalf("validate provider: %v", err)
 	}
 
-	actual := &kflaredv1alpha1.CloudflareProvider{}
+	actual := &kflaredv1alpha1.ClusterCloudflareProvider{}
 	if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
 		t.Fatal(err)
 	}
@@ -98,13 +98,13 @@ func TestProviderReconcileClassifiesCredentialValidationFailures(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			scheme := providerTestScheme(t)
-			provider := readyProvider()
-			provider.Finalizers = []string{providerFinalizer}
+			provider := readyClusterProvider()
+			provider.Finalizers = []string{clusterProviderFinalizer}
 			secret := providerTestSecret()
 			kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(provider).WithObjects(provider, secret).Build()
 			validationCause := errors.New("sensitive validation response body")
 			validationErr := tt.validation(validationCause)
-			reconciler := &CloudflareProviderReconciler{
+			reconciler := &ClusterCloudflareProviderReconciler{
 				Client:     kubeClient,
 				Scheme:     scheme,
 				Cloudflare: fakeCloudflareFactory{client: &fakeCloudflareClient{validateErr: validationErr}},
@@ -115,7 +115,7 @@ func TestProviderReconcileClassifiesCredentialValidationFailures(t *testing.T) {
 				t.Fatalf("Reconcile() error = %v, want preserved validation error", err)
 			}
 
-			actual := &kflaredv1alpha1.CloudflareProvider{}
+			actual := &kflaredv1alpha1.ClusterCloudflareProvider{}
 			if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
 				t.Fatal(err)
 			}
@@ -135,12 +135,12 @@ func TestProviderReconcileClassifiesCredentialValidationFailures(t *testing.T) {
 
 func TestProviderReconcilePreservesValidationAndStatusPatchErrors(t *testing.T) {
 	scheme := providerTestScheme(t)
-	provider := readyProvider()
-	provider.Finalizers = []string{providerFinalizer}
+	provider := readyClusterProvider()
+	provider.Finalizers = []string{clusterProviderFinalizer}
 	baseClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(provider).WithObjects(provider, providerTestSecret()).Build()
 	validationErr := errors.New("validation failed")
 	patchErr := errors.New("status patch failed")
-	reconciler := &CloudflareProviderReconciler{
+	reconciler := &ClusterCloudflareProviderReconciler{
 		Client:     statusPatchFailingClient{Client: baseClient, err: patchErr},
 		Scheme:     scheme,
 		Cloudflare: fakeCloudflareFactory{client: &fakeCloudflareClient{validateErr: validationErr}},
