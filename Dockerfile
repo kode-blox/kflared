@@ -2,6 +2,7 @@
 
 ARG GO_VERSION=1.27.0
 
+# Builder stage
 FROM golang:${GO_VERSION}-trixie AS builder
 
 WORKDIR /workspace
@@ -10,9 +11,9 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY VERSION ./
-COPY api ./api
-COPY cmd ./cmd
-COPY internal ./internal
+COPY ./api/ ./api/
+COPY ./cmd/ ./cmd/
+COPY ./internal/ ./internal/
 
 ARG TARGETOS=linux
 ARG TARGETARCH
@@ -20,11 +21,12 @@ ARG COMMIT
 RUN VERSION="$(tr -d '\r\n' < VERSION)" && \
     test -n "$VERSION" && \
     test -n "$COMMIT" && \
-    CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build \
-      -trimpath \
-      -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
-      -o /out/kflared ./cmd
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+        -trimpath \
+        -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
+        -o /out/kflared ./cmd
 
+# Production stage
 FROM debian:trixie-slim AS production
 
 LABEL org.opencontainers.image.authors="Sayak Mukhopadhyay" \
@@ -48,7 +50,7 @@ RUN groupadd --gid 1000 app && \
 WORKDIR /app
 
 COPY --chown=app:app --from=builder /out/kflared ./kflared
-COPY LICENSE /usr/share/licenses/kflared/LICENSE
+COPY LICENSE THIRD_PARTY_NOTICES /usr/share/licenses/kflared/
 
 USER 1000:1000
 EXPOSE 8081 8443
