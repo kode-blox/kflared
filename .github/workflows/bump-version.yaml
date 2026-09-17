@@ -43,7 +43,7 @@ jobs:
           client-id: ${{ vars.GITOPS_APP_CLIENT_ID }}
           private-key: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
-          repositories: kflared
+          repositories: ${{ github.event.repository.name }}
           permission-contents: write
 
       - name: Bump application version

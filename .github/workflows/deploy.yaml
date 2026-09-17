@@ -35,7 +35,6 @@ jobs:
     timeout-minutes: 15
     environment:
       name: ${{ inputs.deployment-environment }}
-      url: ${{ vars.URL }}
     permissions:
       packages: read
 
