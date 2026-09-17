@@ -77,6 +77,7 @@ jobs:
           go-version-input: 1.27.0
           go-package: ./...
           cache: false
+          repo-checkout: false
 
       - name: Validate GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
