@@ -24,6 +24,7 @@ jobs:
     name: CI
     permissions:
       contents: read
+      security-events: write
     uses: $/.github/workflows/ci.yaml
 
   deliver-development:
