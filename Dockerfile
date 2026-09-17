@@ -1,43 +1,56 @@
 # syntax=docker/dockerfile:1.7
 
-# Build the kflared binary
-# Override BASE_IMAGE to build from another registry, e.g. docker.io/library/golang:1.27
-ARG BASE_IMAGE=golang:1.27
-FROM ${BASE_IMAGE} AS builder
-ARG TARGETOS
-ARG TARGETARCH
-ARG COMMIT
+ARG GO_VERSION=1.27.0
+
+FROM golang:${GO_VERSION}-trixie AS builder
 
 WORKDIR /workspace
-# Copy the Go Modules manifests
-COPY go.mod go.mod
-COPY go.sum go.sum
-# cache deps before building and copying source so that we don't need to re-download as much
-# and so that source changes don't invalidate our downloaded layer
+
+COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy the version metadata and Go source
-COPY VERSION VERSION
-COPY api api
-COPY cmd cmd
-COPY internal internal
+COPY VERSION ./
+COPY api ./api
+COPY cmd ./cmd
+COPY internal ./internal
 
-# Build
-# the GOARCH has no default value to allow the binary to be built according to the host where the command
-# was called. For example, if we call the docker-build task in a local env which has the Apple Silicon M1 SO
-# the docker BUILDPLATFORM arg will be linux/arm64 when for Apple x86 it will be linux/amd64. Therefore,
-# by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
-RUN test -n "$(cat VERSION)" && test -n "${COMMIT}" && \
-    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
-    go build -a -trimpath \
-      -ldflags="-s -w -X main.version=$(cat VERSION) -X main.commit=${COMMIT}" \
-      -o kflared cmd/main.go
+ARG TARGETOS=linux
+ARG TARGETARCH
+ARG COMMIT
+RUN VERSION="$(tr -d '\r\n' < VERSION)" && \
+    test -n "$VERSION" && \
+    test -n "$COMMIT" && \
+    CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build \
+      -trimpath \
+      -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
+      -o /out/kflared ./cmd
 
-# Use distroless as minimal base image to package the kflared binary
-# Refer to https://github.com/GoogleContainerTools/distroless for more details
-FROM gcr.io/distroless/static:nonroot
-WORKDIR /
-COPY --from=builder /workspace/kflared .
-USER 65532:65532
+FROM debian:trixie-slim AS production
 
-ENTRYPOINT ["/kflared"]
+LABEL org.opencontainers.image.authors="Sayak Mukhopadhyay" \
+      org.opencontainers.image.url="https://github.com/orgs/kode-blox/packages/container/package/kflared" \
+      org.opencontainers.image.documentation="https://kflared.kodeblox.com" \
+      org.opencontainers.image.vendor="kode-blox" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.title="KFlared" \
+      org.opencontainers.image.description="Gateway controller for Cloudflare Tunnel" \
+      org.opencontainers.image.base.name="docker.io/library/debian:trixie-slim"
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    update-ca-certificates
+
+RUN groupadd --gid 1000 app && \
+    useradd --uid 1000 --gid app --shell /usr/sbin/nologin --create-home app
+
+WORKDIR /app
+
+COPY --chown=app:app --from=builder /out/kflared ./kflared
+COPY LICENSE /usr/share/licenses/kflared/LICENSE
+
+USER 1000:1000
+EXPOSE 8081 8443
+
+ENTRYPOINT ["./kflared"]
