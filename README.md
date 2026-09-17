@@ -35,6 +35,7 @@ GRPCRoute, wildcard hostnames, HTTPS origins, direct Service backend routing, sh
 - an internal, non-headless Traefik Service
 - a Cloudflare account API token with only Cloudflare Tunnel/Connector write access required for the selected account
 - optional ExternalDNS and its `externaldns.k8s.io/v1alpha1` DNSEndpoint CRD
+- optional External Secrets Operator and a `ClusterSecretStore` when using the chart's ExternalSecret integration
 
 The token does not need DNS edit permission. Put it only in `kflared-system`; the controller has no cluster-wide Secret permission:
 
@@ -42,6 +43,8 @@ The token does not need DNS edit permission. Put it only in `kflared-system`; th
 kubectl -n kflared-system create secret generic cloudflare-api-token \
   --from-literal=api-token='<CLOUDFLARE_API_TOKEN>'
 ```
+
+Helm users can instead opt in to the chart's `externalSecrets` values. The chart then creates an `ExternalSecret` targeting `cloudflare-api-token`; External Secrets Operator and the referenced `ClusterSecretStore` must already exist.
 
 ## Install and configure
 
@@ -58,7 +61,7 @@ Project automation requires Go and PowerShell 7 or newer. Task is pinned in the 
 Create a provider, label an allowed tenant namespace, and create a binding. Adapt the examples under [`config/samples`](config/samples) to the actual account ID, DNS zones, Gateway, listener, and Traefik Service.
 
 ```sh
-kubectl apply -f config/samples/kflared_v1alpha1_cloudflareprovider.yaml
+kubectl apply -f config/samples/kflared_v1alpha1_clustercloudflareprovider.yaml
 kubectl label namespace my-app kflared.kodeblox.com/cloudflare-provider=default
 kubectl -n my-app apply -f config/samples/kflared_v1alpha1_cloudflaretunnelbinding.yaml
 ```
@@ -66,7 +69,7 @@ kubectl -n my-app apply -f config/samples/kflared_v1alpha1_cloudflaretunnelbindi
 Inspect conditions and DNS requirements:
 
 ```sh
-kubectl get cloudflareproviders
+kubectl get clustercloudflareproviders
 kubectl -n my-app get cloudflaretunnelbindings -o yaml
 ```
 

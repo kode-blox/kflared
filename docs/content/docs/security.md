@@ -5,7 +5,9 @@ description: Review the credential, tenancy, workload, and disclosure boundaries
 
 ## Credentials
 
-`CloudflareProvider.spec.apiTokenSecretRef` names one Secret and key in `kflared-system`. The reference cannot select another namespace. The manager's ClusterRole has no Secret access; a namespace Role grants only the operations needed in the system namespace. Sensitive resource reads bypass the shared cache so the manager does not require a cluster-wide Secret informer.
+`ClusterCloudflareProvider.spec.apiTokenSecretRef` names one Secret and key in `kflared-system`. The reference cannot select another namespace. The manager's ClusterRole has no Secret access; a namespace Role grants only the operations needed in the system namespace. Sensitive resource reads bypass the shared cache so the manager does not require a cluster-wide Secret informer.
+
+The Helm chart can optionally create an External Secrets Operator `ExternalSecret`; it still targets a Secret in the release namespace and grants KFlared no access to the external secret backend.
 
 Use one least-privilege API token per operational trust boundary. The MVP needs account-scoped Cloudflare Tunnel and Connector write access and no DNS permission. Rotate the value in place; the provider's periodic credential check and binding reconciliation will observe it.
 

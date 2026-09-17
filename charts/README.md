@@ -16,12 +16,28 @@ helm upgrade --install kflared ./charts \
 
 The chart supports another release namespace. The controller discovers it through the Pod downward API and keeps Cloudflare credentials and generated connector resources in that namespace.
 
-Create the API token Secret after installation and before a `CloudflareProvider`:
+By default, create the API token Secret after installation and before a `ClusterCloudflareProvider`:
 
 ```sh
 kubectl -n kflared-system create secret generic cloudflare-api-token \
   --from-literal=api-token='<CLOUDFLARE_API_TOKEN>'
 ```
+
+The chart can instead create an `ExternalSecret` when External Secrets Operator and a `ClusterSecretStore` are already installed. The target Secret remains in the release namespace and defaults to `cloudflare-api-token`:
+
+```yaml
+externalSecrets:
+  enabled: true
+  secretStore: production
+  refreshInterval: 1h
+  targetSecretName: cloudflare-api-token
+  secrets:
+    - secretKey: api-token
+      remoteRef:
+        key: kflared/cloudflare-api-token
+```
+
+The remote key is provider-specific. The resulting `api-token` key must match `ClusterCloudflareProvider.spec.apiTokenSecretRef.key`.
 
 Use `--skip-crds` with Helm, or `spec.source.helm.skipCrds: true` with Argo CD, only when cluster administrators manage these CRDs separately. Use `--include-crds` when rendering the complete chart with `helm template`.
 

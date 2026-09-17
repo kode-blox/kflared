@@ -3,9 +3,15 @@ KFlared has been installed in namespace {{ .Release.Namespace }}.
 Verify the controller:
   kubectl -n {{ .Release.Namespace }} rollout status deployment/{{ include "kflared.fullname" . }}
 
-Create the Cloudflare API token Secret before creating a CloudflareProvider:
+{{ if .Values.externalSecrets.enabled }}
+The ExternalSecret {{ include "kflared.fullname" . }} will reconcile the Cloudflare API token into Secret {{ include "kflared.secretName" . }}.
+Wait for that Secret before creating a ClusterCloudflareProvider:
+  kubectl -n {{ .Release.Namespace }} wait --for=create secret/{{ include "kflared.secretName" . }} --timeout=2m
+{{ else }}
+Create the Cloudflare API token Secret before creating a ClusterCloudflareProvider:
   kubectl -n {{ .Release.Namespace }} create secret generic cloudflare-api-token \
     --from-literal=api-token='<CLOUDFLARE_API_TOKEN>'
+{{ end }}
 
 The token requires account-scoped Cloudflare Tunnel/Connector write access; DNS
 permission is not required. Gateway API v1.6.1 CRDs and Traefik 3.7.10+ are

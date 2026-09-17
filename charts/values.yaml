@@ -24,6 +24,18 @@ rbac:
   helperRoles:
     enabled: false
 
+# Optionally create the Cloudflare API token Secret through External Secrets Operator.
+# External Secrets Operator and a ClusterSecretStore must already be installed.
+externalSecrets:
+  enabled: false
+  secretStore: ""
+  refreshInterval: 1h
+  targetSecretName: cloudflare-api-token
+  secrets: []
+  # - secretKey: api-token
+  #   remoteRef:
+  #     key: kflared/cloudflare-api-token
+
 leaderElection:
   enabled: true
 

@@ -6,6 +6,13 @@ Expand the name of the chart.
 {{- end }}
 
 {{/*
+Create the name of the Cloudflare API token Secret.
+*/}}
+{{- define "kflared.secretName" -}}
+{{- .Values.externalSecrets.targetSecretName }}
+{{- end }}
+
+{{/*
 Create a default fully qualified app name.
 */}}
 {{- define "kflared.fullname" -}}

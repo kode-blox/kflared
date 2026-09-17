@@ -13,6 +13,7 @@ KFlared publishes hostnames from a Traefik-managed Kubernetes Gateway through a 
 - An internal, non-headless Traefik Service.
 - A Cloudflare account API token with Tunnel and Connector write access for the selected account.
 - Optional: ExternalDNS and its `externaldns.k8s.io/v1alpha1` `DNSEndpoint` CRD.
+- Optional: External Secrets Operator and a `ClusterSecretStore` when the chart should reconcile the API token Secret.
 
 The Cloudflare token does not need DNS edit permission. ExternalDNS performs DNS changes when its CRD is installed.
 
@@ -51,12 +52,28 @@ Task is pinned in `tools/task` and does not need a global installation. Run `./t
 
 ## Create the API token Secret
 
-Create the administrator-managed Secret in the controller namespace:
+By default, create the administrator-managed Secret in the controller namespace:
 
 ```sh
 kubectl -n kflared-system create secret generic cloudflare-api-token \
   --from-literal=api-token='<CLOUDFLARE_API_TOKEN>'
 ```
+
+For External Secrets Operator, opt in through Helm values instead:
+
+```yaml
+externalSecrets:
+  enabled: true
+  secretStore: production
+  refreshInterval: 1h
+  targetSecretName: cloudflare-api-token
+  secrets:
+    - secretKey: api-token
+      remoteRef:
+        key: kflared/cloudflare-api-token
+```
+
+The chart does not install External Secrets Operator or its CRDs. The remote key depends on the configured backend; the resulting `api-token` key must match `ClusterCloudflareProvider.spec.apiTokenSecretRef.key`.
 
 The controller has no cluster-wide Secret permission. A namespace-scoped Role allows it to read credentials and manage connector resources only in its system namespace.
 
@@ -65,7 +82,7 @@ The controller has no cluster-wide Secret permission. A namespace-scoped Role al
 Apply a provider, authorize a tenant namespace with the provider's selector, then apply a binding in that namespace:
 
 ```sh
-kubectl apply -f config/samples/kflared_v1alpha1_cloudflareprovider.yaml
+kubectl apply -f config/samples/kflared_v1alpha1_clustercloudflareprovider.yaml
 kubectl label namespace my-app kflared.kodeblox.com/cloudflare-provider=default
 kubectl -n my-app apply -f config/samples/kflared_v1alpha1_cloudflaretunnelbinding.yaml
 ```
