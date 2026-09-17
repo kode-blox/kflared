@@ -66,7 +66,7 @@ tasks:
       - task: controller-gen
       - cmd: |
           pwsh -NoLogo -NoProfile -NonInteractive -Command '
-            & $env:CONTROLLER_GEN "object:headerFile=hack\boilerplate.go.txt,year=$env:YEAR" `
+            & $env:CONTROLLER_GEN "object:headerFile=hack/boilerplate.go.txt,year=$env:YEAR" `
               "paths=./api/v1alpha1"
             exit $LASTEXITCODE
           '

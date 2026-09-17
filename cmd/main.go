@@ -212,7 +212,7 @@ func main() {
 		Client:          mgr.GetClient(),
 		Scheme:          mgr.GetScheme(),
 		RESTMapper:      mgr.GetRESTMapper(),
-		Recorder:        mgr.GetEventRecorderFor("kflared"),
+		Recorder:        mgr.GetEventRecorder("kflared"),
 		Cloudflare:      cfclient.SDKFactory{},
 		SystemNamespace: systemNamespace,
 	}).SetupWithManager(mgr); err != nil {

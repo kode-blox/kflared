@@ -37,12 +37,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/recorder"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	kflaredv1alpha1 "github.com/kode-blox/kflared/api/v1alpha1"
@@ -71,7 +71,7 @@ type CloudflareTunnelBindingReconciler struct {
 	client.Client
 	Scheme           *runtime.Scheme
 	RESTMapper       apiMeta.RESTMapper
-	Recorder         record.EventRecorder
+	Recorder         recorder.EventRecorder
 	Cloudflare       cfclient.Factory
 	SystemNamespace  string
 	CloudflaredImage string
@@ -116,7 +116,7 @@ func (r *CloudflareTunnelBindingReconciler) Reconcile(ctx context.Context, req c
 		if err := r.Update(ctx, binding); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{}, nil
 	}
 
 	apiToken, err := r.readAPIToken(ctx, provider)
@@ -179,69 +179,14 @@ func (r *CloudflareTunnelBindingReconciler) Reconcile(ctx context.Context, req c
 }
 
 func (r *CloudflareTunnelBindingReconciler) validateAndPlan(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding) (*kflaredv1alpha1.CloudflareProvider, []string, string, *ctrl.Result, error) {
-	provider := &kflaredv1alpha1.CloudflareProvider{}
-	if err := r.Get(ctx, types.NamespacedName{Name: binding.Spec.ProviderRef.Name}, provider); err != nil {
-		return r.rejected(ctx, binding, "ProviderNotFound", "The referenced CloudflareProvider was not found", client.IgnoreNotFound(err))
+	provider, result, err := r.validateProvider(ctx, binding)
+	if result != nil || err != nil {
+		return nil, nil, "", result, err
 	}
-	accepted := apiMeta.FindStatusCondition(provider.Status.Conditions, kflaredv1alpha1.ProviderConditionAccepted)
-	credentialsValid := apiMeta.FindStatusCondition(provider.Status.Conditions, kflaredv1alpha1.ProviderConditionCredentialsValid)
-	acceptedCurrent := accepted != nil && accepted.ObservedGeneration == provider.Generation
-	credentialsCurrent := credentialsValid != nil && credentialsValid.ObservedGeneration == provider.Generation
-	if (acceptedCurrent && accepted.Status == metav1.ConditionFalse) ||
-		(credentialsCurrent && credentialsValid.Status == metav1.ConditionFalse) {
-		return r.rejected(ctx, binding, "ProviderNotReady", "The referenced CloudflareProvider is not ready", nil)
+	origin, result, err := r.validateGatewayService(ctx, binding)
+	if result != nil || err != nil {
+		return nil, nil, "", result, err
 	}
-	if !acceptedCurrent || accepted.Status != metav1.ConditionTrue ||
-		!credentialsCurrent || credentialsValid.Status != metav1.ConditionTrue {
-		return nil, nil, "", nil, fmt.Errorf("%w: %q", errProviderStatusUnknown, provider.Name)
-	}
-	namespace := &corev1.Namespace{}
-	if err := r.Get(ctx, types.NamespacedName{Name: binding.Namespace}, namespace); err != nil {
-		return nil, nil, "", nil, err
-	}
-	selector, err := metav1.LabelSelectorAsSelector(&provider.Spec.BindingNamespaceSelector)
-	if err != nil || !selector.Matches(labels.Set(namespace.Labels)) {
-		return r.rejected(ctx, binding, "NamespaceNotAllowed", "The provider does not allow bindings from this namespace", nil)
-	}
-	if winner, err := r.gatewayWinner(ctx, binding); err != nil {
-		return nil, nil, "", nil, err
-	} else if winner != nil {
-		return r.rejected(ctx, binding, "GatewayConflict", fmt.Sprintf("Gateway is already owned by %s/%s", winner.Namespace, winner.Name), nil)
-	}
-
-	gateway := &gatewayv1.Gateway{}
-	if err := r.Get(ctx, types.NamespacedName{Namespace: binding.Namespace, Name: binding.Spec.GatewayRef.Name}, gateway); err != nil {
-		return r.rejected(ctx, binding, "GatewayNotFound", "The referenced Gateway was not found", client.IgnoreNotFound(err))
-	}
-	gatewayClass := &gatewayv1.GatewayClass{}
-	if err := r.Get(ctx, types.NamespacedName{Name: string(gateway.Spec.GatewayClassName)}, gatewayClass); err != nil {
-		return r.rejected(ctx, binding, "GatewayClassNotFound", "The GatewayClass referenced by the Gateway was not found", client.IgnoreNotFound(err))
-	}
-	if gatewayClass.Spec.ControllerName != gatewayv1.GatewayController(traefikControllerName) {
-		return r.rejected(ctx, binding, "UnsupportedGatewayClass", "The MVP supports only Traefik-managed Gateways", nil)
-	}
-	if !conditionTrue(gateway.Status.Conditions, gateway.Generation, "Accepted") || !conditionTrue(gateway.Status.Conditions, gateway.Generation, "Programmed") {
-		return r.rejected(ctx, binding, "GatewayNotReady", "The Gateway must report current Accepted and Programmed conditions", nil)
-	}
-	if !validHTTPListener(gateway, binding.Spec.GatewayRef.SectionName) {
-		return r.rejected(ctx, binding, "ListenerInvalid", "The selected Gateway listener must exist and use HTTP", nil)
-	}
-
-	service := &corev1.Service{}
-	if err := r.Get(ctx, types.NamespacedName{Namespace: binding.Namespace, Name: binding.Spec.GatewayServiceRef.Name}, service); err != nil {
-		return r.rejected(ctx, binding, "ServiceNotFound", "The referenced Gateway Service was not found", client.IgnoreNotFound(err))
-	}
-	if service.Spec.ClusterIP == "" || service.Spec.ClusterIP == corev1.ClusterIPNone {
-		return r.rejected(ctx, binding, "HeadlessServiceUnsupported", "The Gateway Service must have a ClusterIP", nil)
-	}
-	if service.Spec.Type == corev1.ServiceTypeLoadBalancer || service.Spec.Type == corev1.ServiceTypeNodePort {
-		r.event(binding, corev1.EventTypeWarning, "PublicServiceExposure", "The selected Traefik Service may already expose a public endpoint; ClusterIP is recommended")
-	}
-	port, err := resolveServicePort(service, binding.Spec.GatewayServiceRef.Port)
-	if err != nil {
-		return r.rejected(ctx, binding, "ServicePortInvalid", err.Error(), nil)
-	}
-	origin := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", service.Name, service.Namespace, port)
 
 	routeHostnames, err := r.acceptedRouteHostnames(ctx, binding)
 	if err != nil {
@@ -264,6 +209,87 @@ func (r *CloudflareTunnelBindingReconciler) validateAndPlan(ctx context.Context,
 		return r.rejected(ctx, binding, "HostnameConflict", fmt.Sprintf("Hostname %s is already owned by %s/%s", hostname, winner.Namespace, winner.Name), nil)
 	}
 	return provider, hostnames, origin, nil, nil
+}
+
+func (r *CloudflareTunnelBindingReconciler) validateProvider(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding) (*kflaredv1alpha1.CloudflareProvider, *ctrl.Result, error) {
+	provider := &kflaredv1alpha1.CloudflareProvider{}
+	if err := r.Get(ctx, types.NamespacedName{Name: binding.Spec.ProviderRef.Name}, provider); err != nil {
+		_, _, _, result, rejectErr := r.rejected(ctx, binding, "ProviderNotFound", "The referenced CloudflareProvider was not found", client.IgnoreNotFound(err))
+		return nil, result, rejectErr
+	}
+	accepted := apiMeta.FindStatusCondition(provider.Status.Conditions, kflaredv1alpha1.ProviderConditionAccepted)
+	credentialsValid := apiMeta.FindStatusCondition(provider.Status.Conditions, kflaredv1alpha1.ProviderConditionCredentialsValid)
+	acceptedCurrent := accepted != nil && accepted.ObservedGeneration == provider.Generation
+	credentialsCurrent := credentialsValid != nil && credentialsValid.ObservedGeneration == provider.Generation
+	if (acceptedCurrent && accepted.Status == metav1.ConditionFalse) ||
+		(credentialsCurrent && credentialsValid.Status == metav1.ConditionFalse) {
+		_, _, _, result, rejectErr := r.rejected(ctx, binding, "ProviderNotReady", "The referenced CloudflareProvider is not ready", nil)
+		return nil, result, rejectErr
+	}
+	if !acceptedCurrent || accepted.Status != metav1.ConditionTrue ||
+		!credentialsCurrent || credentialsValid.Status != metav1.ConditionTrue {
+		return nil, nil, fmt.Errorf("%w: %q", errProviderStatusUnknown, provider.Name)
+	}
+	namespace := &corev1.Namespace{}
+	if err := r.Get(ctx, types.NamespacedName{Name: binding.Namespace}, namespace); err != nil {
+		return nil, nil, err
+	}
+	selector, err := metav1.LabelSelectorAsSelector(&provider.Spec.BindingNamespaceSelector)
+	if err != nil || !selector.Matches(labels.Set(namespace.Labels)) {
+		_, _, _, result, rejectErr := r.rejected(ctx, binding, "NamespaceNotAllowed", "The provider does not allow bindings from this namespace", nil)
+		return nil, result, rejectErr
+	}
+	if winner, err := r.gatewayWinner(ctx, binding); err != nil {
+		return nil, nil, err
+	} else if winner != nil {
+		_, _, _, result, rejectErr := r.rejected(ctx, binding, "GatewayConflict", fmt.Sprintf("Gateway is already owned by %s/%s", winner.Namespace, winner.Name), nil)
+		return nil, result, rejectErr
+	}
+	return provider, nil, nil
+}
+
+func (r *CloudflareTunnelBindingReconciler) validateGatewayService(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding) (string, *ctrl.Result, error) {
+	gateway := &gatewayv1.Gateway{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: binding.Namespace, Name: binding.Spec.GatewayRef.Name}, gateway); err != nil {
+		_, _, _, result, rejectErr := r.rejected(ctx, binding, "GatewayNotFound", "The referenced Gateway was not found", client.IgnoreNotFound(err))
+		return "", result, rejectErr
+	}
+	gatewayClass := &gatewayv1.GatewayClass{}
+	if err := r.Get(ctx, types.NamespacedName{Name: string(gateway.Spec.GatewayClassName)}, gatewayClass); err != nil {
+		_, _, _, result, rejectErr := r.rejected(ctx, binding, "GatewayClassNotFound", "The GatewayClass referenced by the Gateway was not found", client.IgnoreNotFound(err))
+		return "", result, rejectErr
+	}
+	if gatewayClass.Spec.ControllerName != gatewayv1.GatewayController(traefikControllerName) {
+		_, _, _, result, rejectErr := r.rejected(ctx, binding, "UnsupportedGatewayClass", "The MVP supports only Traefik-managed Gateways", nil)
+		return "", result, rejectErr
+	}
+	if !conditionTrue(gateway.Status.Conditions, gateway.Generation, "Accepted") || !conditionTrue(gateway.Status.Conditions, gateway.Generation, "Programmed") {
+		_, _, _, result, rejectErr := r.rejected(ctx, binding, "GatewayNotReady", "The Gateway must report current Accepted and Programmed conditions", nil)
+		return "", result, rejectErr
+	}
+	if !validHTTPListener(gateway, binding.Spec.GatewayRef.SectionName) {
+		_, _, _, result, rejectErr := r.rejected(ctx, binding, "ListenerInvalid", "The selected Gateway listener must exist and use HTTP", nil)
+		return "", result, rejectErr
+	}
+
+	service := &corev1.Service{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: binding.Namespace, Name: binding.Spec.GatewayServiceRef.Name}, service); err != nil {
+		_, _, _, result, rejectErr := r.rejected(ctx, binding, "ServiceNotFound", "The referenced Gateway Service was not found", client.IgnoreNotFound(err))
+		return "", result, rejectErr
+	}
+	if service.Spec.ClusterIP == "" || service.Spec.ClusterIP == corev1.ClusterIPNone {
+		_, _, _, result, rejectErr := r.rejected(ctx, binding, "HeadlessServiceUnsupported", "The Gateway Service must have a ClusterIP", nil)
+		return "", result, rejectErr
+	}
+	if service.Spec.Type == corev1.ServiceTypeLoadBalancer || service.Spec.Type == corev1.ServiceTypeNodePort {
+		r.event(binding, corev1.EventTypeWarning, "PublicServiceExposure", "The selected Traefik Service may already expose a public endpoint; ClusterIP is recommended")
+	}
+	port, err := resolveServicePort(service, binding.Spec.GatewayServiceRef.Port)
+	if err != nil {
+		_, _, _, result, rejectErr := r.rejected(ctx, binding, "ServicePortInvalid", err.Error(), nil)
+		return "", result, rejectErr
+	}
+	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", service.Name, service.Namespace, port), nil, nil
 }
 
 func (r *CloudflareTunnelBindingReconciler) acceptedRouteHostnames(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding) ([]string, error) {
@@ -322,7 +348,7 @@ func (r *CloudflareTunnelBindingReconciler) ensureTunnel(ctx context.Context, ap
 }
 
 func (r *CloudflareTunnelBindingReconciler) reconcileConnectorSecret(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding, name, token string) error {
-	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.systemNamespace()}}
+	secret := &corev1.Secret{Name: name, Namespace: r.systemNamespace()}
 	_, err := controllerutil.CreateOrPatch(ctx, r.Client, secret, func() error {
 		secret.Labels = managedLabels(binding)
 		secret.Type = corev1.SecretTypeOpaque
@@ -334,7 +360,7 @@ func (r *CloudflareTunnelBindingReconciler) reconcileConnectorSecret(ctx context
 
 func (r *CloudflareTunnelBindingReconciler) reconcileConnectorDeployment(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding, name string) (*appsv1.Deployment, error) {
 	replicas := effectiveReplicas(binding.Spec.ConnectorReplicas)
-	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.systemNamespace()}}
+	deployment := &appsv1.Deployment{Name: name, Namespace: r.systemNamespace()}
 	_, err := controllerutil.CreateOrPatch(ctx, r.Client, deployment, func() error {
 		resourceLabels := managedLabels(binding)
 		deployment.Labels = resourceLabels
@@ -349,7 +375,7 @@ func (r *CloudflareTunnelBindingReconciler) reconcileConnectorDeployment(ctx con
 }
 
 func (r *CloudflareTunnelBindingReconciler) reconcilePodDisruptionBudget(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding, name string) error {
-	pdb := &policyv1.PodDisruptionBudget{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.systemNamespace()}}
+	pdb := &policyv1.PodDisruptionBudget{Name: name, Namespace: r.systemNamespace()}
 	_, err := controllerutil.CreateOrPatch(ctx, r.Client, pdb, func() error {
 		resourceLabels := managedLabels(binding)
 		pdb.Labels = resourceLabels
@@ -495,9 +521,9 @@ func (r *CloudflareTunnelBindingReconciler) finalize(ctx context.Context, bindin
 	}
 	name := connectorResourceName(binding.UID)
 	objects := []client.Object{
-		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.systemNamespace()}},
-		&policyv1.PodDisruptionBudget{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.systemNamespace()}},
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.systemNamespace()}},
+		&appsv1.Deployment{Name: name, Namespace: r.systemNamespace()},
+		&policyv1.PodDisruptionBudget{Name: name, Namespace: r.systemNamespace()},
+		&corev1.Secret{Name: name, Namespace: r.systemNamespace()},
 	}
 	for _, object := range objects {
 		if err := r.Delete(ctx, object); err != nil && !apierrors.IsNotFound(err) {
@@ -601,7 +627,7 @@ func (r *CloudflareTunnelBindingReconciler) readAPIToken(ctx context.Context, pr
 	}
 	token := strings.TrimSpace(string(secret.Data[provider.Spec.APITokenSecretRef.Key]))
 	if token == "" {
-		return "", fmt.Errorf("Cloudflare API token Secret key is missing or empty")
+		return "", fmt.Errorf("cloudflare API token secret key is missing or empty")
 	}
 	return token, nil
 }
@@ -629,7 +655,7 @@ func (r *CloudflareTunnelBindingReconciler) cloudflaredImage() string {
 
 func (r *CloudflareTunnelBindingReconciler) event(binding *kflaredv1alpha1.CloudflareTunnelBinding, eventType, reason, message string) {
 	if r.Recorder != nil {
-		r.Recorder.Event(binding, eventType, reason, message)
+		r.Recorder.Eventf(binding, nil, eventType, reason, "Reconcile", "%s", message)
 	}
 }
 
@@ -670,7 +696,7 @@ func (r *CloudflareTunnelBindingReconciler) bindingsForObject(ctx context.Contex
 			matches = binding.Namespace == changed.Name
 		}
 		if matches {
-			requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: binding.Namespace, Name: binding.Name}})
+			requests = append(requests, reconcile.Request{Namespace: binding.Namespace, Name: binding.Name})
 		}
 	}
 	return requests
@@ -694,7 +720,7 @@ func resolveServicePort(service *corev1.Service, requested intstr.IntOrString) (
 			return port.Port, nil
 		}
 	}
-	return 0, fmt.Errorf("Gateway Service port %q was not found", requested.String())
+	return 0, fmt.Errorf("gateway Service port %q was not found", requested.String())
 }
 
 func routeTargetsBinding(route *gatewayv1.HTTPRoute, binding *kflaredv1alpha1.CloudflareTunnelBinding) bool {
@@ -794,14 +820,14 @@ func connectorPodSpec(secretName, image string) corev1.PodSpec {
 				RunAsNonRoot:             &trueValue,
 				Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 			},
-			ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/ready", Port: intstr.FromString("metrics")}}, PeriodSeconds: 10, FailureThreshold: 3},
-			LivenessProbe:  &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/ready", Port: intstr.FromString("metrics")}}, InitialDelaySeconds: 10, PeriodSeconds: 20, FailureThreshold: 3},
+			ReadinessProbe: &corev1.Probe{HTTPGet: &corev1.HTTPGetAction{Path: "/ready", Port: intstr.FromString("metrics")}, PeriodSeconds: 10, FailureThreshold: 3},
+			LivenessProbe:  &corev1.Probe{HTTPGet: &corev1.HTTPGetAction{Path: "/ready", Port: intstr.FromString("metrics")}, InitialDelaySeconds: 10, PeriodSeconds: 20, FailureThreshold: 3},
 			Resources: corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{corev1.ResourceCPU: resourceMustParse("50m"), corev1.ResourceMemory: resourceMustParse("64Mi")},
 				Limits:   corev1.ResourceList{corev1.ResourceCPU: resourceMustParse("500m"), corev1.ResourceMemory: resourceMustParse("256Mi")},
 			},
 		}},
-		Volumes: []corev1.Volume{{Name: "tunnel-token", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: secretName, DefaultMode: &readOnlyMode}}}},
+		Volumes: []corev1.Volume{{Name: "tunnel-token", Secret: &corev1.SecretVolumeSource{SecretName: secretName, DefaultMode: &readOnlyMode}}},
 	}
 }
 

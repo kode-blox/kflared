@@ -26,7 +26,6 @@ import (
 	"strings"
 	"testing"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -76,11 +75,11 @@ func TestCRDDefaultsAndImmutableOwnershipFields(t *testing.T) {
 		t.Fatal("accountID mutation unexpectedly passed CRD validation")
 	}
 	tooManyReplicas := &kflaredv1alpha1.CloudflareTunnelBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: "too-many-replicas", Namespace: "default"},
+		Name: "too-many-replicas", Namespace: testDefaultName,
 		Spec: kflaredv1alpha1.CloudflareTunnelBindingSpec{
-			ProviderRef:       kflaredv1alpha1.LocalReference{Name: "default"},
-			GatewayRef:        kflaredv1alpha1.GatewayReference{Name: "gateway", SectionName: "http"},
-			GatewayServiceRef: kflaredv1alpha1.GatewayServiceReference{Name: "traefik", Port: intstr.FromInt32(80)},
+			ProviderRef:       kflaredv1alpha1.LocalReference{Name: testDefaultName},
+			GatewayRef:        kflaredv1alpha1.GatewayReference{Name: "gateway", SectionName: testHTTPSectionName},
+			GatewayServiceRef: kflaredv1alpha1.GatewayServiceReference{Name: testGatewayName, Port: intstr.FromInt32(80)},
 			ConnectorReplicas: 11,
 		},
 	}
@@ -89,11 +88,11 @@ func TestCRDDefaultsAndImmutableOwnershipFields(t *testing.T) {
 	}
 
 	binding := &kflaredv1alpha1.CloudflareTunnelBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: "defaults", Namespace: "default"},
+		Name: "defaults", Namespace: testDefaultName,
 		Spec: kflaredv1alpha1.CloudflareTunnelBindingSpec{
-			ProviderRef:       kflaredv1alpha1.LocalReference{Name: "default"},
-			GatewayRef:        kflaredv1alpha1.GatewayReference{Name: "gateway", SectionName: "http"},
-			GatewayServiceRef: kflaredv1alpha1.GatewayServiceReference{Name: "traefik", Port: intstr.FromInt32(80)},
+			ProviderRef:       kflaredv1alpha1.LocalReference{Name: testDefaultName},
+			GatewayRef:        kflaredv1alpha1.GatewayReference{Name: "gateway", SectionName: testHTTPSectionName},
+			GatewayServiceRef: kflaredv1alpha1.GatewayServiceReference{Name: testGatewayName, Port: intstr.FromInt32(80)},
 		},
 	}
 	if err := kubeClient.Create(ctx, binding); err != nil {

@@ -26,7 +26,6 @@ import (
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -48,12 +47,12 @@ func TestProviderReconcileValidatesCredentials(t *testing.T) {
 	provider.Finalizers = nil
 	provider.Status = kflaredv1alpha1.CloudflareProviderStatus{}
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-api-token", Namespace: defaultSystemNamespace},
-		Data:       map[string][]byte{"api-token": []byte("secret-token")},
+		Name: testAPITokenSecretName, Namespace: defaultSystemNamespace,
+		Data: map[string][]byte{testAPITokenSecretKey: []byte("secret-token")},
 	}
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(provider).WithObjects(provider, secret).Build()
 	reconciler := &CloudflareProviderReconciler{Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: &fakeCloudflareClient{}}}
-	request := ctrl.Request{NamespacedName: types.NamespacedName{Name: provider.Name}}
+	request := ctrl.Request{Name: provider.Name}
 
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 		t.Fatalf("add finalizer: %v", err)
@@ -110,7 +109,7 @@ func TestProviderReconcileClassifiesCredentialValidationFailures(t *testing.T) {
 				Scheme:     scheme,
 				Cloudflare: fakeCloudflareFactory{client: &fakeCloudflareClient{validateErr: validationErr}},
 			}
-			request := ctrl.Request{NamespacedName: types.NamespacedName{Name: provider.Name}}
+			request := ctrl.Request{Name: provider.Name}
 
 			if _, err := reconciler.Reconcile(context.Background(), request); !errors.Is(err, validationCause) {
 				t.Fatalf("Reconcile() error = %v, want preserved validation error", err)
@@ -147,7 +146,7 @@ func TestProviderReconcilePreservesValidationAndStatusPatchErrors(t *testing.T) 
 		Cloudflare: fakeCloudflareFactory{client: &fakeCloudflareClient{validateErr: validationErr}},
 	}
 
-	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: provider.Name}})
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{Name: provider.Name})
 	if !errors.Is(err, validationErr) || !errors.Is(err, patchErr) {
 		t.Fatalf("Reconcile() error = %v, want both validation and patch errors", err)
 	}
@@ -167,8 +166,8 @@ func providerTestScheme(t *testing.T) *runtime.Scheme {
 
 func providerTestSecret() *corev1.Secret {
 	return &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-api-token", Namespace: defaultSystemNamespace},
-		Data:       map[string][]byte{"api-token": []byte("secret-token")},
+		Name: testAPITokenSecretName, Namespace: defaultSystemNamespace,
+		Data: map[string][]byte{testAPITokenSecretKey: []byte("secret-token")},
 	}
 }
 

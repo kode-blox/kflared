@@ -47,9 +47,9 @@ import (
 )
 
 const (
-	routeParentTestNamespace   = "tenant"
-	routeParentTestGatewayName = "traefik"
-	routeParentTestSectionName = "http"
+	routeParentTestNamespace   = testTenantName
+	routeParentTestGatewayName = testGatewayName
+	routeParentTestSectionName = testHTTPSectionName
 )
 
 type failingGetClient struct {
@@ -92,9 +92,9 @@ func TestBindingReconcileCreatesIdempotentTunnelAndHardenedConnectors(t *testing
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.CloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}, &appsv1.Deployment{}).
 		WithObjects(objects...).Build()
-	cloudflare := &fakeCloudflareClient{token: "connector-token"}
+	cloudflare := &fakeCloudflareClient{token: testConnectorToken}
 	reconciler := &CloudflareTunnelBindingReconciler{Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: cloudflare}}
-	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: binding.Namespace, Name: binding.Name}}
+	request := ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}
 
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 		t.Fatalf("add finalizer: %v", err)
@@ -108,7 +108,7 @@ func TestBindingReconcileCreatesIdempotentTunnelAndHardenedConnectors(t *testing
 	if cloudflare.createCalls != 1 || cloudflare.updateCalls != 1 {
 		t.Fatalf("Cloudflare calls create=%d update=%d, want 1 each", cloudflare.createCalls, cloudflare.updateCalls)
 	}
-	if len(cloudflare.configuration) != 2 || cloudflare.configuration[0].Hostname != "app.example.com" || cloudflare.configuration[1].Service != "http_status:404" {
+	if len(cloudflare.configuration) != 2 || cloudflare.configuration[0].Hostname != testApplicationHostname || cloudflare.configuration[1].Service != testNotFoundOrigin {
 		t.Fatalf("unexpected ingress: %#v", cloudflare.configuration)
 	}
 
@@ -116,7 +116,7 @@ func TestBindingReconcileCreatesIdempotentTunnelAndHardenedConnectors(t *testing
 	if err := kubeClient.Get(context.Background(), request.NamespacedName, actualBinding); err != nil {
 		t.Fatal(err)
 	}
-	if actualBinding.Status.TunnelID != "tunnel-id" || len(actualBinding.Status.DNSRecords) != 1 {
+	if actualBinding.Status.TunnelID != testTunnelID || len(actualBinding.Status.DNSRecords) != 1 {
 		t.Fatalf("unexpected binding status: %#v", actualBinding.Status)
 	}
 	resourceName := connectorResourceName(binding.UID)
@@ -136,7 +136,7 @@ func TestBindingReconcileCreatesIdempotentTunnelAndHardenedConnectors(t *testing
 	if err := kubeClient.Get(context.Background(), types.NamespacedName{Namespace: defaultSystemNamespace, Name: resourceName}, secret); err != nil {
 		t.Fatal(err)
 	}
-	if string(secret.Data["token"]) != "connector-token" {
+	if string(secret.Data["token"]) != testConnectorToken {
 		t.Fatal("connector token Secret was not reconciled")
 	}
 }
@@ -145,7 +145,7 @@ func TestBindingDeprogramsTunnelWhenItLosesEligibility(t *testing.T) {
 	scheme := bindingTestScheme(t)
 	objects, binding := validBindingObjects()
 	binding.Finalizers = []string{bindingFinalizer}
-	binding.Status.TunnelID = "tunnel-id"
+	binding.Status.TunnelID = testTunnelID
 	for _, object := range objects {
 		if route, ok := object.(*gatewayv1.HTTPRoute); ok {
 			route.Status.Parents = nil
@@ -155,17 +155,17 @@ func TestBindingDeprogramsTunnelWhenItLosesEligibility(t *testing.T) {
 		WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.CloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}).
 		WithObjects(objects...).Build()
 	cloudflare := &fakeCloudflareClient{
-		token:         "connector-token",
-		tunnel:        &cfclient.Tunnel{ID: "tunnel-id", Name: planner.TunnelName(types.UID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"), binding), ConfigSource: cfclient.ConfigSourceCloudflare},
-		configuration: []cfclient.IngressRule{{Hostname: "app.example.com", Service: "http://old"}, {Service: "http_status:404"}},
+		token:         testConnectorToken,
+		tunnel:        &cfclient.Tunnel{ID: testTunnelID, Name: planner.TunnelName(types.UID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"), binding), ConfigSource: cfclient.ConfigSourceCloudflare},
+		configuration: []cfclient.IngressRule{{Hostname: testApplicationHostname, Service: testOldOrigin}, {Service: testNotFoundOrigin}},
 	}
 	reconciler := &CloudflareTunnelBindingReconciler{Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: cloudflare}}
-	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: binding.Namespace, Name: binding.Name}}
+	request := ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}
 
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 		t.Fatalf("deprogram invalid binding: %v", err)
 	}
-	if cloudflare.updateCalls != 1 || len(cloudflare.configuration) != 1 || cloudflare.configuration[0].Service != "http_status:404" {
+	if cloudflare.updateCalls != 1 || len(cloudflare.configuration) != 1 || cloudflare.configuration[0].Service != testNotFoundOrigin {
 		t.Fatalf("tunnel was not safely deprogrammed: %#v", cloudflare.configuration)
 	}
 	actual := &kflaredv1alpha1.CloudflareTunnelBinding{}
@@ -202,15 +202,15 @@ func TestBindingRejectsCurrentProviderFailure(t *testing.T) {
 				WithObjects(objects...).Build()
 			cloudflare := &fakeCloudflareClient{
 				tunnel:        &cfclient.Tunnel{ID: binding.Status.TunnelID, Name: binding.Status.TunnelName, ConfigSource: cfclient.ConfigSourceCloudflare},
-				configuration: []cfclient.IngressRule{{Hostname: "app.example.com", Service: "http://old"}, {Service: "http_status:404"}},
+				configuration: []cfclient.IngressRule{{Hostname: testApplicationHostname, Service: testOldOrigin}, {Service: testNotFoundOrigin}},
 			}
 			reconciler := &CloudflareTunnelBindingReconciler{Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: cloudflare}}
-			request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: binding.Namespace, Name: binding.Name}}
+			request := ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}
 
 			if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 				t.Fatalf("reject binding: %v", err)
 			}
-			if cloudflare.updateCalls != 1 || len(cloudflare.configuration) != 1 || cloudflare.configuration[0].Service != "http_status:404" {
+			if cloudflare.updateCalls != 1 || len(cloudflare.configuration) != 1 || cloudflare.configuration[0].Service != testNotFoundOrigin {
 				t.Fatalf("confirmed provider failure did not deprogram the tunnel: %#v", cloudflare.configuration)
 			}
 			actual := &kflaredv1alpha1.CloudflareTunnelBinding{}
@@ -259,7 +259,7 @@ func TestBindingPreservesWorkingTunnelWhileProviderCredentialsAreIndeterminate(t
 			setPublishedBindingStatus(binding)
 			tt.mutate(bindingTestProvider(t, objects))
 			expectedStatus := binding.DeepCopy().Status
-			initialConfiguration := []cfclient.IngressRule{{Hostname: "app.example.com", Service: "http://old"}, {Service: "http_status:404"}}
+			initialConfiguration := []cfclient.IngressRule{{Hostname: testApplicationHostname, Service: testOldOrigin}, {Service: testNotFoundOrigin}}
 			kubeClient := fake.NewClientBuilder().WithScheme(scheme).
 				WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.CloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}).
 				WithObjects(objects...).Build()
@@ -268,7 +268,7 @@ func TestBindingPreservesWorkingTunnelWhileProviderCredentialsAreIndeterminate(t
 				configuration: slices.Clone(initialConfiguration),
 			}
 			reconciler := &CloudflareTunnelBindingReconciler{Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: cloudflare}}
-			request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: binding.Namespace, Name: binding.Name}}
+			request := ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}
 
 			result, err := reconciler.Reconcile(context.Background(), request)
 			if !errors.Is(err, errProviderStatusUnknown) {
@@ -306,16 +306,16 @@ func TestBindingReportsOperationalReconciliationFailures(t *testing.T) {
 		{
 			name:            "cluster identity",
 			failedCondition: kflaredv1alpha1.BindingConditionProgrammed,
-			reason:          "TunnelReconciliationFailed",
-			message:         "Tunnel reconciliation could not complete",
+			reason:          testTunnelReconciliationReason,
+			message:         testTunnelReconciliationMessage,
 			objectFailure:   &corev1.Namespace{},
 			objectKey:       types.NamespacedName{Name: metav1.NamespaceSystem},
 		},
 		{
 			name:            "tunnel",
 			failedCondition: kflaredv1alpha1.BindingConditionProgrammed,
-			reason:          "TunnelReconciliationFailed",
-			message:         "Tunnel reconciliation could not complete",
+			reason:          testTunnelReconciliationReason,
+			message:         testTunnelReconciliationMessage,
 			cloudflareFailure: func(cloudflare *fakeCloudflareClient, failure error) {
 				cloudflare.getTunnelErr = failure
 			},
@@ -323,8 +323,8 @@ func TestBindingReportsOperationalReconciliationFailures(t *testing.T) {
 		{
 			name:            "configuration",
 			failedCondition: kflaredv1alpha1.BindingConditionProgrammed,
-			reason:          "TunnelReconciliationFailed",
-			message:         "Tunnel reconciliation could not complete",
+			reason:          testTunnelReconciliationReason,
+			message:         testTunnelReconciliationMessage,
 			cloudflareFailure: func(cloudflare *fakeCloudflareClient, failure error) {
 				cloudflare.getConfigErr = failure
 			},
@@ -332,8 +332,8 @@ func TestBindingReportsOperationalReconciliationFailures(t *testing.T) {
 		{
 			name:            "token",
 			failedCondition: kflaredv1alpha1.BindingConditionConnectorReady,
-			reason:          "ConnectorReconciliationFailed",
-			message:         "Connector reconciliation could not complete",
+			reason:          testConnectorReconciliationReason,
+			message:         testConnectorReconciliationMessage,
 			cloudflareFailure: func(cloudflare *fakeCloudflareClient, failure error) {
 				cloudflare.getTokenErr = failure
 			},
@@ -341,34 +341,34 @@ func TestBindingReportsOperationalReconciliationFailures(t *testing.T) {
 		{
 			name:            "API token Secret",
 			failedCondition: kflaredv1alpha1.BindingConditionConnectorReady,
-			reason:          "ConnectorReconciliationFailed",
-			message:         "Connector reconciliation could not complete",
+			reason:          testConnectorReconciliationReason,
+			message:         testConnectorReconciliationMessage,
 			objectFailure:   &corev1.Secret{},
-			objectKey:       types.NamespacedName{Namespace: defaultSystemNamespace, Name: "cloudflare-api-token"},
+			objectKey:       types.NamespacedName{Namespace: defaultSystemNamespace, Name: testAPITokenSecretName},
 		},
 		{
 			name:            "connector Secret",
 			failedCondition: kflaredv1alpha1.BindingConditionConnectorReady,
-			reason:          "ConnectorReconciliationFailed",
-			message:         "Connector reconciliation could not complete",
+			reason:          testConnectorReconciliationReason,
+			message:         testConnectorReconciliationMessage,
 			objectFailure:   &corev1.Secret{},
-			objectKey:       types.NamespacedName{Namespace: defaultSystemNamespace, Name: "kflared-111111112222"},
+			objectKey:       types.NamespacedName{Namespace: defaultSystemNamespace, Name: testManagedResourceName},
 		},
 		{
 			name:            "Deployment",
 			failedCondition: kflaredv1alpha1.BindingConditionConnectorReady,
-			reason:          "ConnectorReconciliationFailed",
-			message:         "Connector reconciliation could not complete",
+			reason:          testConnectorReconciliationReason,
+			message:         testConnectorReconciliationMessage,
 			objectFailure:   &appsv1.Deployment{},
-			objectKey:       types.NamespacedName{Namespace: defaultSystemNamespace, Name: "kflared-111111112222"},
+			objectKey:       types.NamespacedName{Namespace: defaultSystemNamespace, Name: testManagedResourceName},
 		},
 		{
 			name:            "PodDisruptionBudget",
 			failedCondition: kflaredv1alpha1.BindingConditionConnectorReady,
-			reason:          "ConnectorReconciliationFailed",
-			message:         "Connector reconciliation could not complete",
+			reason:          testConnectorReconciliationReason,
+			message:         testConnectorReconciliationMessage,
 			objectFailure:   &policyv1.PodDisruptionBudget{},
-			objectKey:       types.NamespacedName{Namespace: defaultSystemNamespace, Name: "kflared-111111112222"},
+			objectKey:       types.NamespacedName{Namespace: defaultSystemNamespace, Name: testManagedResourceName},
 		},
 		{
 			name:            "DNS",
@@ -376,7 +376,7 @@ func TestBindingReportsOperationalReconciliationFailures(t *testing.T) {
 			reason:          "DNSReconciliationFailed",
 			message:         "DNS automation reconciliation could not complete",
 			objectFailure:   &unstructured.Unstructured{},
-			objectKey:       types.NamespacedName{Namespace: "tenant", Name: "kflared-111111112222"},
+			objectKey:       types.NamespacedName{Namespace: testTenantName, Name: testManagedResourceName},
 		},
 	}
 	for _, tt := range tests {
@@ -386,11 +386,11 @@ func TestBindingReportsOperationalReconciliationFailures(t *testing.T) {
 			setPublishedBindingStatus(binding)
 			expectedStatus := binding.DeepCopy().Status
 			failure := errors.New("injected operational failure")
-			desiredConfiguration := planner.IngressRules([]string{"app.example.com"}, "http://traefik.tenant.svc.cluster.local:80")
+			desiredConfiguration := planner.IngressRules([]string{testApplicationHostname}, "http://traefik.tenant.svc.cluster.local:80")
 			cloudflare := &fakeCloudflareClient{
 				tunnel:        &cfclient.Tunnel{ID: binding.Status.TunnelID, Name: planner.TunnelName(types.UID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"), binding), ConfigSource: cfclient.ConfigSourceCloudflare},
 				configuration: slices.Clone(desiredConfiguration),
-				token:         "connector-token",
+				token:         testConnectorToken,
 			}
 			if tt.cloudflareFailure != nil {
 				tt.cloudflareFailure(cloudflare, failure)
@@ -408,7 +408,7 @@ func TestBindingReportsOperationalReconciliationFailures(t *testing.T) {
 				RESTMapper: bindingTestRESTMapper(),
 				Cloudflare: fakeCloudflareFactory{client: cloudflare},
 			}
-			request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: binding.Namespace, Name: binding.Name}}
+			request := ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}
 
 			result, err := reconciler.Reconcile(context.Background(), request)
 			if !errors.Is(err, failure) {
@@ -439,10 +439,10 @@ func TestBindingOperationalFailureReturnsCauseAndSinglePatchFailure(t *testing.T
 		patchErr: patchFailure,
 	}
 	reconciler := &CloudflareTunnelBindingReconciler{Client: kubeClient, Scheme: scheme}
-	binding := &kflaredv1alpha1.CloudflareTunnelBinding{ObjectMeta: metav1.ObjectMeta{Name: "public", Namespace: "tenant", Generation: 1}}
+	binding := &kflaredv1alpha1.CloudflareTunnelBinding{Name: "public", Namespace: testTenantName, Generation: 1}
 	cause := errors.New("tunnel operation failed")
 
-	err := reconciler.reportOperationalFailure(context.Background(), binding, kflaredv1alpha1.BindingConditionProgrammed, "TunnelReconciliationFailed", "Tunnel reconciliation could not complete", cause)
+	err := reconciler.reportOperationalFailure(context.Background(), binding, kflaredv1alpha1.BindingConditionProgrammed, testTunnelReconciliationReason, testTunnelReconciliationMessage, cause)
 
 	if !errors.Is(err, cause) || !errors.Is(err, patchFailure) {
 		t.Fatalf("reportOperationalFailure() error = %v, want cause and patch failure", err)
@@ -469,14 +469,14 @@ func TestBindingFinalizationHonorsDeletionPolicy(t *testing.T) {
 			kubeClient := fake.NewClientBuilder().WithScheme(scheme).
 				WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}).
 				WithObjects(objects...).Build()
-			cloudflare := &fakeCloudflareClient{tunnel: &cfclient.Tunnel{ID: binding.Status.TunnelID, Name: "binding-tunnel"}}
+			cloudflare := &fakeCloudflareClient{tunnel: &cfclient.Tunnel{ID: binding.Status.TunnelID, Name: testBindingTunnelName}}
 			reconciler := &CloudflareTunnelBindingReconciler{
 				Client:     kubeClient,
 				Scheme:     scheme,
 				RESTMapper: bindingTestRESTMapper(),
 				Cloudflare: fakeCloudflareFactory{client: cloudflare},
 			}
-			request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: binding.Namespace, Name: binding.Name}}
+			request := ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}
 
 			if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 				t.Fatalf("finalize binding: %v", err)
@@ -502,7 +502,7 @@ func TestBindingFinalizationRetriesRemoteTunnelDeletion(t *testing.T) {
 	deleteErr := errors.New("remote deletion failed")
 	cloudflare := &fakeCloudflareClient{
 		deleteErr: deleteErr,
-		tunnel:    &cfclient.Tunnel{ID: binding.Status.TunnelID, Name: "binding-tunnel"},
+		tunnel:    &cfclient.Tunnel{ID: binding.Status.TunnelID, Name: testBindingTunnelName},
 	}
 	reconciler := &CloudflareTunnelBindingReconciler{
 		Client:     kubeClient,
@@ -510,7 +510,7 @@ func TestBindingFinalizationRetriesRemoteTunnelDeletion(t *testing.T) {
 		RESTMapper: bindingTestRESTMapper(),
 		Cloudflare: fakeCloudflareFactory{client: cloudflare},
 	}
-	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: binding.Namespace, Name: binding.Name}}
+	request := ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}
 
 	if _, err := reconciler.Reconcile(context.Background(), request); !errors.Is(err, deleteErr) {
 		t.Fatalf("first finalization error = %v, want %v", err, deleteErr)
@@ -560,7 +560,7 @@ func TestParentReferenceTargetsGateway(t *testing.T) {
 	wrongGroup := gatewayv1.Group("example.com")
 	wrongKind := gatewayv1.Kind("Service")
 	binding := &kflaredv1alpha1.CloudflareTunnelBinding{
-		ObjectMeta: metav1.ObjectMeta{Namespace: routeParentTestNamespace},
+		Namespace: routeParentTestNamespace,
 		Spec: kflaredv1alpha1.CloudflareTunnelBindingSpec{
 			GatewayRef: kflaredv1alpha1.GatewayReference{Name: routeParentTestGatewayName, SectionName: routeParentTestSectionName},
 		},
@@ -606,20 +606,20 @@ func TestRouteAcceptedDoesNotBorrowStatusFromAnotherGatewayParent(t *testing.T) 
 	section := gatewayv1.SectionName(routeParentTestSectionName)
 	otherNamespace := gatewayv1.Namespace("other")
 	binding := &kflaredv1alpha1.CloudflareTunnelBinding{
-		ObjectMeta: metav1.ObjectMeta{Namespace: routeParentTestNamespace},
+		Namespace: routeParentTestNamespace,
 		Spec: kflaredv1alpha1.CloudflareTunnelBindingSpec{
 			GatewayRef: kflaredv1alpha1.GatewayReference{Name: routeParentTestGatewayName, SectionName: routeParentTestSectionName},
 		},
 	}
 	route := &gatewayv1.HTTPRoute{
-		ObjectMeta: metav1.ObjectMeta{Namespace: routeParentTestNamespace, Generation: 1},
+		Namespace: routeParentTestNamespace, Generation: 1,
 		Spec: gatewayv1.HTTPRouteSpec{CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: []gatewayv1.ParentReference{{
 			Name: routeParentTestGatewayName, SectionName: &section,
 		}}}},
 		Status: gatewayv1.HTTPRouteStatus{RouteStatus: gatewayv1.RouteStatus{Parents: []gatewayv1.RouteParentStatus{{
 			ParentRef:      gatewayv1.ParentReference{Name: routeParentTestGatewayName, Namespace: &otherNamespace, SectionName: &section},
 			ControllerName: gatewayv1.GatewayController(traefikControllerName),
-			Conditions:     []metav1.Condition{currentCondition("Accepted", metav1.ConditionTrue), currentCondition("ResolvedRefs", metav1.ConditionTrue)},
+			Conditions:     []metav1.Condition{currentCondition("Accepted"), currentCondition("ResolvedRefs")},
 		}}}},
 	}
 
@@ -664,25 +664,25 @@ func setPublishedBindingStatus(binding *kflaredv1alpha1.CloudflareTunnelBinding)
 	binding.Finalizers = []string{bindingFinalizer}
 	binding.Status = kflaredv1alpha1.CloudflareTunnelBindingStatus{
 		ObservedGeneration: binding.Generation,
-		TunnelID:           "tunnel-id",
-		TunnelName:         "binding-tunnel",
+		TunnelID:           testTunnelID,
+		TunnelName:         testBindingTunnelName,
 		TunnelCNAME:        "tunnel-id.cfargotunnel.com",
-		PublishedHostnames: []string{"app.example.com"},
+		PublishedHostnames: []string{testApplicationHostname},
 		DNSRecords: []kflaredv1alpha1.DNSRecord{{
-			Hostname: "app.example.com",
+			Hostname: testApplicationHostname,
 			Type:     "CNAME",
 			Target:   "tunnel-id.cfargotunnel.com",
 		}},
 		Resources: kflaredv1alpha1.ConnectorResourceNames{
-			Deployment:          "kflared-111111112222",
-			PodDisruptionBudget: "kflared-111111112222",
-			Secret:              "kflared-111111112222",
-			DNSEndpoint:         "kflared-111111112222",
+			Deployment:          testManagedResourceName,
+			PodDisruptionBudget: testManagedResourceName,
+			Secret:              testManagedResourceName,
+			DNSEndpoint:         testManagedResourceName,
 		},
 		Conditions: []metav1.Condition{
-			currentCondition(kflaredv1alpha1.BindingConditionAccepted, metav1.ConditionTrue),
-			currentCondition(kflaredv1alpha1.BindingConditionProgrammed, metav1.ConditionTrue),
-			currentCondition(kflaredv1alpha1.BindingConditionReady, metav1.ConditionTrue),
+			currentCondition(kflaredv1alpha1.BindingConditionAccepted),
+			currentCondition(kflaredv1alpha1.BindingConditionProgrammed),
+			currentCondition(kflaredv1alpha1.BindingConditionReady),
 		},
 	}
 }
@@ -718,7 +718,7 @@ func finalizingBindingObjects(deletionPolicy kflaredv1alpha1.DeletionPolicy) ([]
 	binding.DeletionTimestamp = &deletionTimestamp
 	binding.Finalizers = []string{bindingFinalizer}
 	binding.Spec.DeletionPolicy = deletionPolicy
-	binding.Status.TunnelID = "tunnel-id"
+	binding.Status.TunnelID = testTunnelID
 
 	resourceName := connectorResourceName(binding.UID)
 	endpoint := &unstructured.Unstructured{}
@@ -727,9 +727,9 @@ func finalizingBindingObjects(deletionPolicy kflaredv1alpha1.DeletionPolicy) ([]
 	endpoint.SetName(resourceName)
 	endpoint.SetNamespace(binding.Namespace)
 	return append(objects,
-		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: defaultSystemNamespace}},
-		&policyv1.PodDisruptionBudget{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: defaultSystemNamespace}},
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: defaultSystemNamespace}},
+		&appsv1.Deployment{Name: resourceName, Namespace: defaultSystemNamespace},
+		&policyv1.PodDisruptionBudget{Name: resourceName, Namespace: defaultSystemNamespace},
+		&corev1.Secret{Name: resourceName, Namespace: defaultSystemNamespace},
 		endpoint,
 	), binding
 }
@@ -741,9 +741,9 @@ func assertFinalizationResourcesDeleted(t *testing.T, kubeClient client.Client, 
 	endpoint.SetAPIVersion(dnsEndpointAPIVersion)
 	endpoint.SetKind(dnsEndpointKind)
 	objects := []client.Object{
-		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: defaultSystemNamespace}},
-		&policyv1.PodDisruptionBudget{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: defaultSystemNamespace}},
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: defaultSystemNamespace}},
+		&appsv1.Deployment{Name: resourceName, Namespace: defaultSystemNamespace},
+		&policyv1.PodDisruptionBudget{Name: resourceName, Namespace: defaultSystemNamespace},
+		&corev1.Secret{Name: resourceName, Namespace: defaultSystemNamespace},
 		endpoint,
 	}
 	objects[3].SetName(resourceName)
@@ -783,43 +783,43 @@ func assertBindingFinalized(t *testing.T, kubeClient client.Client, key types.Na
 }
 
 func validBindingObjects() ([]client.Object, *kflaredv1alpha1.CloudflareTunnelBinding) {
-	section := gatewayv1.SectionName("http")
+	section := gatewayv1.SectionName(testHTTPSectionName)
 	binding := &kflaredv1alpha1.CloudflareTunnelBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: "public", Namespace: "tenant", UID: types.UID("11111111-2222-3333-4444-555555555555"), Generation: 1, CreationTimestamp: metav1.NewTime(time.Unix(100, 0))},
+		Name: "public", Namespace: testTenantName, UID: types.UID("11111111-2222-3333-4444-555555555555"), Generation: 1, CreationTimestamp: metav1.NewTime(time.Unix(100, 0)),
 		Spec: kflaredv1alpha1.CloudflareTunnelBindingSpec{
-			ProviderRef:       kflaredv1alpha1.LocalReference{Name: "default"},
-			GatewayRef:        kflaredv1alpha1.GatewayReference{Name: "traefik", SectionName: "http"},
-			GatewayServiceRef: kflaredv1alpha1.GatewayServiceReference{Name: "traefik", Port: intstr.FromString("web")},
+			ProviderRef:       kflaredv1alpha1.LocalReference{Name: testDefaultName},
+			GatewayRef:        kflaredv1alpha1.GatewayReference{Name: testGatewayName, SectionName: testHTTPSectionName},
+			GatewayServiceRef: kflaredv1alpha1.GatewayServiceReference{Name: testGatewayName, Port: intstr.FromString("web")},
 			ConnectorReplicas: 2,
 			DeletionPolicy:    kflaredv1alpha1.DeletionPolicyDelete,
 		},
 	}
 	gateway := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{Name: "traefik", Namespace: "tenant", Generation: 1},
-		Spec:       gatewayv1.GatewaySpec{GatewayClassName: "traefik", Listeners: []gatewayv1.Listener{{Name: "http", Protocol: gatewayv1.HTTPProtocolType, Port: 80}}},
+		Name: testGatewayName, Namespace: testTenantName, Generation: 1,
+		Spec: gatewayv1.GatewaySpec{GatewayClassName: testGatewayName, Listeners: []gatewayv1.Listener{{Name: testHTTPSectionName, Protocol: gatewayv1.HTTPProtocolType, Port: 80}}},
 		Status: gatewayv1.GatewayStatus{Conditions: []metav1.Condition{
-			currentCondition("Accepted", metav1.ConditionTrue),
-			currentCondition("Programmed", metav1.ConditionTrue),
+			currentCondition("Accepted"),
+			currentCondition("Programmed"),
 		}},
 	}
-	parent := gatewayv1.ParentReference{Name: "traefik", SectionName: &section}
+	parent := gatewayv1.ParentReference{Name: testGatewayName, SectionName: &section}
 	route := &gatewayv1.HTTPRoute{
-		ObjectMeta: metav1.ObjectMeta{Name: "application", Namespace: "tenant", Generation: 1},
-		Spec:       gatewayv1.HTTPRouteSpec{CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: []gatewayv1.ParentReference{parent}}, Hostnames: []gatewayv1.Hostname{"app.example.com"}},
+		Name: "application", Namespace: testTenantName, Generation: 1,
+		Spec: gatewayv1.HTTPRouteSpec{CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: []gatewayv1.ParentReference{parent}}, Hostnames: []gatewayv1.Hostname{testApplicationHostname}},
 		Status: gatewayv1.HTTPRouteStatus{RouteStatus: gatewayv1.RouteStatus{Parents: []gatewayv1.RouteParentStatus{{
 			ParentRef: parent, ControllerName: gatewayv1.GatewayController(traefikControllerName),
-			Conditions: []metav1.Condition{currentCondition("Accepted", metav1.ConditionTrue), currentCondition("ResolvedRefs", metav1.ConditionTrue)},
+			Conditions: []metav1.Condition{currentCondition("Accepted"), currentCondition("ResolvedRefs")},
 		}}}},
 	}
 	return []client.Object{
 		readyProvider(),
 		binding,
-		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "tenant", Labels: map[string]string{"tenant": "allowed"}}},
-		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: metav1.NamespaceSystem, UID: types.UID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")}},
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-api-token", Namespace: defaultSystemNamespace}, Data: map[string][]byte{"api-token": []byte("api-token")}},
-		&gatewayv1.GatewayClass{ObjectMeta: metav1.ObjectMeta{Name: "traefik"}, Spec: gatewayv1.GatewayClassSpec{ControllerName: gatewayv1.GatewayController(traefikControllerName)}},
+		&corev1.Namespace{Name: testTenantName, Labels: map[string]string{testTenantName: "allowed"}},
+		&corev1.Namespace{Name: metav1.NamespaceSystem, UID: types.UID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")},
+		&corev1.Secret{Name: testAPITokenSecretName, Namespace: defaultSystemNamespace, Data: map[string][]byte{testAPITokenSecretKey: []byte(testAPITokenSecretKey)}},
+		&gatewayv1.GatewayClass{Name: testGatewayName, Spec: gatewayv1.GatewayClassSpec{ControllerName: gatewayv1.GatewayController(traefikControllerName)}},
 		gateway,
-		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "traefik", Namespace: "tenant"}, Spec: corev1.ServiceSpec{ClusterIP: "10.0.0.10", Ports: []corev1.ServicePort{{Name: "web", Port: 80}}}},
+		&corev1.Service{Name: testGatewayName, Namespace: testTenantName, Spec: corev1.ServiceSpec{ClusterIP: "10.0.0.10", Ports: []corev1.ServicePort{{Name: "web", Port: 80}}}},
 		route,
 	}, binding
 }

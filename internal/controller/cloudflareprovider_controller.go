@@ -70,7 +70,7 @@ func (r *CloudflareProviderReconciler) Reconcile(ctx context.Context, req ctrl.R
 		if err := r.Update(ctx, provider); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{}, nil
 	}
 
 	statusBase := provider.DeepCopy()

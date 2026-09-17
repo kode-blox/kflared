@@ -26,6 +26,26 @@ import (
 	cfclient "github.com/kode-blox/kflared/internal/cloudflare"
 )
 
+const (
+	testDefaultName                    = "default"
+	testTenantName                     = "tenant"
+	testGatewayName                    = "traefik"
+	testHTTPSectionName                = "http"
+	testAPITokenSecretName             = "cloudflare-api-token"
+	testAPITokenSecretKey              = "api-token"
+	testConnectorToken                 = "connector-token"
+	testApplicationHostname            = "app.example.com"
+	testTunnelID                       = "tunnel-id"
+	testOldOrigin                      = "http://old"
+	testNotFoundOrigin                 = "http_status:404"
+	testTunnelReconciliationReason     = "TunnelReconciliationFailed"
+	testTunnelReconciliationMessage    = "Tunnel reconciliation could not complete"
+	testConnectorReconciliationReason  = "ConnectorReconciliationFailed"
+	testConnectorReconciliationMessage = "Connector reconciliation could not complete"
+	testManagedResourceName            = "kflared-111111112222"
+	testBindingTunnelName              = "binding-tunnel"
+)
+
 type fakeCloudflareFactory struct {
 	client *fakeCloudflareClient
 }
@@ -69,7 +89,7 @@ func (f *fakeCloudflareClient) GetTunnel(_ context.Context, id string) (*cfclien
 
 func (f *fakeCloudflareClient) CreateTunnel(_ context.Context, name string) (*cfclient.Tunnel, error) {
 	f.createCalls++
-	f.tunnel = &cfclient.Tunnel{ID: "tunnel-id", Name: name, ConfigSource: cfclient.ConfigSourceCloudflare}
+	f.tunnel = &cfclient.Tunnel{ID: testTunnelID, Name: name, ConfigSource: cfclient.ConfigSourceCloudflare}
 	copy := *f.tunnel
 	return &copy, nil
 }
@@ -103,22 +123,22 @@ func (f *fakeCloudflareClient) DeleteTunnel(context.Context, string) error {
 	return nil
 }
 
-func currentCondition(conditionType string, status metav1.ConditionStatus) metav1.Condition {
-	return metav1.Condition{Type: conditionType, Status: status, Reason: "Test", ObservedGeneration: 1, LastTransitionTime: metav1.Now()}
+func currentCondition(conditionType string) metav1.Condition {
+	return metav1.Condition{Type: conditionType, Status: metav1.ConditionTrue, Reason: "Test", ObservedGeneration: 1, LastTransitionTime: metav1.Now()}
 }
 
 func readyProvider() *kflaredv1alpha1.CloudflareProvider {
 	return &kflaredv1alpha1.CloudflareProvider{
-		ObjectMeta: metav1.ObjectMeta{Name: "default", Generation: 1},
+		Name: testDefaultName, Generation: 1,
 		Spec: kflaredv1alpha1.CloudflareProviderSpec{
 			AccountID:                "0123456789abcdef0123456789abcdef",
-			APITokenSecretRef:        kflaredv1alpha1.SecretKeyReference{Name: "cloudflare-api-token", Key: "api-token"},
+			APITokenSecretRef:        kflaredv1alpha1.SecretKeyReference{Name: testAPITokenSecretName, Key: testAPITokenSecretKey},
 			AllowedDNSZones:          []string{"example.com"},
-			BindingNamespaceSelector: metav1.LabelSelector{MatchLabels: map[string]string{"tenant": "allowed"}},
+			BindingNamespaceSelector: metav1.LabelSelector{MatchLabels: map[string]string{testTenantName: "allowed"}},
 		},
 		Status: kflaredv1alpha1.CloudflareProviderStatus{ObservedGeneration: 1, Conditions: []metav1.Condition{
-			currentCondition(kflaredv1alpha1.ProviderConditionAccepted, metav1.ConditionTrue),
-			currentCondition(kflaredv1alpha1.ProviderConditionCredentialsValid, metav1.ConditionTrue),
+			currentCondition(kflaredv1alpha1.ProviderConditionAccepted),
+			currentCondition(kflaredv1alpha1.ProviderConditionCredentialsValid),
 		}},
 	}
 }
