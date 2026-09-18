@@ -39,7 +39,7 @@ import (
 )
 
 const (
-	defaultSystemNamespace   = "kflared-system"
+	defaultSystemNamespace   = "kflared"
 	clusterProviderFinalizer = "kflared.kodeblox.com/cluster-provider-protection"
 )
 

@@ -41,6 +41,7 @@ Common labels.
 {{- define "kflared.labels" -}}
 helm.sh/chart: {{ include "kflared.chart" . }}
 {{ include "kflared.selectorLabels" . }}
+app.kubernetes.io/component: {{ .Values.kubernetesComponent }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -53,7 +54,6 @@ Selector labels.
 {{- define "kflared.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "kflared.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
-app.kubernetes.io/component: {{ .Values.kubernetesComponent }}
 {{- end }}
 
 {{/*

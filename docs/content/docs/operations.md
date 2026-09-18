@@ -55,7 +55,7 @@ Manual DNS cannot be removed by KFlared. Remove surviving records deliberately; 
 ## Logs
 
 ```sh
-kubectl logs -n kflared-system \
+kubectl logs -n kflared \
   deployment/kflared-controller-manager \
   -c manager \
   --follow

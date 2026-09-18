@@ -17,10 +17,16 @@ limitations under the License.
 package controller
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
+
+	rbacv1 "k8s.io/api/rbac/v1"
+	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 )
 
 func TestHelmCRDsMatchGeneratedManifests(t *testing.T) {
@@ -51,6 +57,77 @@ func TestHelmCRDsMatchGeneratedManifests(t *testing.T) {
 			t.Errorf("%s does not match %s; regenerate manifests and synchronize the chart CRD", test.chart, test.generated)
 		}
 	}
+}
+
+func TestHelmManagerRBACMatchesGeneratedManifest(t *testing.T) {
+	generatedPath := filepath.Join("..", "..", "config", "rbac", "role.yaml")
+	chartPath := filepath.Join("..", "..", "charts", "templates", "clusterrole.yaml")
+
+	generatedRules := readClusterRoleRules(t, generatedPath, false)
+	chartRules := readClusterRoleRules(t, chartPath, true)
+	if !reflect.DeepEqual(chartRules, generatedRules) {
+		got, _ := json.MarshalIndent(chartRules, "", "  ")
+		want, _ := json.MarshalIndent(generatedRules, "", "  ")
+		t.Fatalf("%s manager rules do not match %s\ngot:\n%s\nwant:\n%s", chartPath, generatedPath, got, want)
+	}
+}
+
+func readClusterRoleRules(t *testing.T, path string, helmTemplate bool) []rbacv1.PolicyRule {
+	t.Helper()
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if helmTemplate {
+		content = []byte(staticManagerClusterRole(string(content)))
+	}
+
+	jsonContent, err := utilyaml.ToJSON(content)
+	if err != nil {
+		t.Fatalf("convert %s to JSON: %v", path, err)
+	}
+	role := &rbacv1.ClusterRole{}
+	if err := json.Unmarshal(jsonContent, role); err != nil {
+		t.Fatalf("decode %s: %v", path, err)
+	}
+	return normalizePolicyRules(role.Rules)
+}
+
+func staticManagerClusterRole(content string) string {
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	result := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "{{- if and .Values.metrics.enabled") {
+			break
+		}
+		if strings.Contains(line, `name: {{ include "kflared.fullname" . }}-manager`) {
+			result = append(result, "  name: manager-role")
+			continue
+		}
+		if strings.Contains(line, "{{") {
+			continue
+		}
+		result = append(result, line)
+	}
+	return strings.Join(result, "\n")
+}
+
+func normalizePolicyRules(rules []rbacv1.PolicyRule) []rbacv1.PolicyRule {
+	normalized := append([]rbacv1.PolicyRule(nil), rules...)
+	for i := range normalized {
+		slices.Sort(normalized[i].APIGroups)
+		slices.Sort(normalized[i].Resources)
+		slices.Sort(normalized[i].ResourceNames)
+		slices.Sort(normalized[i].NonResourceURLs)
+		slices.Sort(normalized[i].Verbs)
+	}
+	slices.SortFunc(normalized, func(leftRule, rightRule rbacv1.PolicyRule) int {
+		left, _ := json.Marshal(leftRule)
+		right, _ := json.Marshal(rightRule)
+		return strings.Compare(string(left), string(right))
+	})
+	return normalized
 }
 
 func normalizeCRD(content string) string {

@@ -34,7 +34,7 @@ import (
 )
 
 // namespace where the project is deployed in
-const namespace = "kflared-system"
+const namespace = "kflared"
 
 // serviceAccountName created for the project
 const serviceAccountName = "kflared-controller-manager"

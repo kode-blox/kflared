@@ -23,7 +23,7 @@ The supported chart is rooted at `charts/`:
 
 ```sh
 helm upgrade --install kflared ./charts \
-  --namespace kflared-system \
+  --namespace kflared \
   --create-namespace
 ```
 
@@ -37,7 +37,7 @@ To inspect the complete rendered chart, include the otherwise omitted CRDs:
 
 ```sh
 helm template kflared ./charts \
-  --namespace kflared-system \
+  --namespace kflared \
   --include-crds
 ```
 
@@ -57,7 +57,7 @@ Task is pinned in `tools/task` and does not need a global installation. Run `./t
 By default, create the administrator-managed Secret in the controller namespace:
 
 ```sh
-kubectl -n kflared-system create secret generic cloudflare-api-token \
+kubectl -n kflared create secret generic cloudflare-api-token \
   --from-literal=api-token='<CLOUDFLARE_API_TOKEN>'
 ```
 

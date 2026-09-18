@@ -242,16 +242,17 @@ tasks:
     cmds:
       - cmd: |
           pwsh -NoLogo -NoProfile -NonInteractive -Command '
-            & $env:HELM template kflared ./charts --namespace kflared-system --include-crds `
+            & $env:HELM template kflared ./charts --namespace kflared `
               --kube-version $env:HELM_KUBE_VERSION | Out-Null
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
             & $env:HELM template custom ./charts --namespace custom-system --include-crds `
               --kube-version $env:HELM_KUBE_VERSION `
               --set fullnameOverride=custom-controller `
-              --set kubernetesComponent=custom `
               --set namespace.create=true `
               --set namespace.labels.environment=test `
+              --set namespace.annotations.owner=ci `
+              --set kubernetesComponent=custom `
               --set rbac.helperRoles.enabled=true `
               --set externalSecrets.enabled=true `
               --set externalSecrets.secretStore=example-store `

@@ -10,7 +10,7 @@ KFlared CRDs are plain YAML in Helm's special `crds/` directory. Helm installs t
 
 ```sh
 helm upgrade --install kflared ./charts \
-  --namespace kflared-system \
+  --namespace kflared \
   --create-namespace
 ```
 
@@ -20,10 +20,12 @@ Set `namespace.create=true` when a GitOps or rendered-manifest workflow should c
 
 For a direct Helm install into a namespace that does not exist yet, continue to pass `--create-namespace`. Helm must create its release namespace before it can apply chart templates, so a chart-managed Namespace cannot bootstrap that Helm operation by itself.
 
+`kubernetesComponent` sets the descriptive `app.kubernetes.io/component` metadata label. It is deliberately excluded from workload selectors, which use only the stable release name and instance labels.
+
 By default, create the API token Secret after installation and before a `ClusterCloudflareProvider`:
 
 ```sh
-kubectl -n kflared-system create secret generic cloudflare-api-token \
+kubectl -n kflared create secret generic cloudflare-api-token \
   --from-literal=api-token='<CLOUDFLARE_API_TOKEN>'
 ```
 

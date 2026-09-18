@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
   "type": "object",
+  "additionalProperties": false,
   "required": [
     "replicaCount",
     "image",
@@ -20,6 +21,7 @@
     },
     "image": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["repository", "pullPolicy", "tag"],
       "properties": {
         "repository": {"type": "string", "minLength": 1},
@@ -31,10 +33,12 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 63,
-      "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+      "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+      "description": "Descriptive app.kubernetes.io/component label; it is not used in workload selectors."
     },
     "namespace": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["create", "labels", "annotations"],
       "properties": {
         "create": {"type": "boolean"},
@@ -44,21 +48,24 @@
     },
     "serviceAccount": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["create", "automount", "annotations", "name"],
       "properties": {
         "create": {"type": "boolean"},
         "automount": {"type": "boolean", "enum": [true]},
-        "annotations": {"type": "object"},
+        "annotations": {"type": "object", "additionalProperties": {"type": "string"}},
         "name": {"type": "string"}
       }
     },
     "rbac": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["create", "helperRoles"],
       "properties": {
         "create": {"type": "boolean"},
         "helperRoles": {
           "type": "object",
+          "additionalProperties": false,
           "required": ["enabled"],
           "properties": {
             "enabled": {"type": "boolean"}
@@ -68,6 +75,7 @@
     },
     "externalSecrets": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["enabled", "secretStore", "refreshInterval", "targetSecretName", "secrets"],
       "properties": {
         "enabled": {"type": "boolean"},
@@ -78,6 +86,7 @@
           "type": "array",
           "items": {
             "type": "object",
+            "additionalProperties": false,
             "required": ["secretKey", "remoteRef"],
             "properties": {
               "secretKey": {"type": "string", "minLength": 1},
@@ -89,14 +98,14 @@
                 },
                 "additionalProperties": true
               }
-            },
-            "additionalProperties": true
+            }
           }
         }
       }
     },
     "leaderElection": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["enabled"],
       "properties": {
         "enabled": {"type": "boolean"}
@@ -104,6 +113,7 @@
     },
     "metrics": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["enabled", "secure", "port", "service"],
       "properties": {
         "enabled": {"type": "boolean"},
@@ -111,19 +121,21 @@
         "port": {"type": "integer", "minimum": 1, "maximum": 65535},
         "service": {
           "type": "object",
+          "additionalProperties": false,
           "required": ["annotations"],
           "properties": {
-            "annotations": {"type": "object"}
+            "annotations": {"type": "object", "additionalProperties": {"type": "string"}}
           }
         }
       }
     },
     "serviceMonitor": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["enabled", "labels", "interval", "scrapeTimeout"],
       "properties": {
         "enabled": {"type": "boolean"},
-        "labels": {"type": "object"},
+        "labels": {"type": "object", "additionalProperties": {"type": "string"}},
         "interval": {"type": "string", "pattern": "^[0-9]+(ms|s|m|h)$"},
         "scrapeTimeout": {"type": "string", "pattern": "^[0-9]+(ms|s|m|h)$"}
       }
@@ -135,8 +147,8 @@
     "imagePullSecrets": {"type": "array"},
     "nameOverride": {"type": "string"},
     "fullnameOverride": {"type": "string"},
-    "podAnnotations": {"type": "object"},
-    "podLabels": {"type": "object"},
+    "podAnnotations": {"type": "object", "additionalProperties": {"type": "string"}},
+    "podLabels": {"type": "object", "additionalProperties": {"type": "string"}},
     "podSecurityContext": {"type": "object"},
     "securityContext": {"type": "object"},
     "resources": {"type": "object"},
@@ -147,9 +159,34 @@
     "volumes": {"type": "array"},
     "volumeMounts": {"type": "array"},
     "priorityClassName": {"type": "string"},
-    "nodeSelector": {"type": "object"},
+    "nodeSelector": {"type": "object", "additionalProperties": {"type": "string"}},
     "tolerations": {"type": "array"},
     "affinity": {"type": "object"},
     "topologySpreadConstraints": {"type": "array"}
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "externalSecrets": {
+            "properties": {
+              "enabled": {"const": true}
+            },
+            "required": ["enabled"]
+          }
+        },
+        "required": ["externalSecrets"]
+      },
+      "then": {
+        "properties": {
+          "externalSecrets": {
+            "properties": {
+              "secretStore": {"minLength": 1},
+              "secrets": {"minItems": 1}
+            }
+          }
+        }
+      }
+    }
+  ]
 }

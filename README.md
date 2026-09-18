@@ -37,10 +37,10 @@ GRPCRoute, wildcard hostnames, HTTPS origins, direct Service backend routing, sh
 - optional ExternalDNS and its `externaldns.k8s.io/v1alpha1` DNSEndpoint CRD
 - optional External Secrets Operator and a `ClusterSecretStore` when using the chart's ExternalSecret integration
 
-The token does not need DNS edit permission. Put it only in `kflared-system`; the controller has no cluster-wide Secret permission:
+The token does not need DNS edit permission. Put it only in `kflared`; the controller has no cluster-wide Secret permission:
 
 ```sh
-kubectl -n kflared-system create secret generic cloudflare-api-token \
+kubectl -n kflared create secret generic cloudflare-api-token \
   --from-literal=api-token='<CLOUDFLARE_API_TOKEN>'
 ```
 

@@ -25,7 +25,7 @@ ingress:
   - service: http_status:404
 ```
 
-It deploys at least two official cloudflared connectors in `kflared-system`. Every hostname targets `<tunnel-id>.cfargotunnel.com` through an optional binding-owned `DNSEndpoint`. Without that CRD, exact records remain visible in binding status for manual administration.
+It deploys at least two official cloudflared connectors in `kflared`. Every hostname targets `<tunnel-id>.cfargotunnel.com` through an optional binding-owned `DNSEndpoint`. Without that CRD, exact records remain visible in binding status for manual administration.
 
 The controller continuously compares desired and observed state. Kubernetes watches trigger prompt reconciliation; controller-runtime exponential backoff handles errors, while stable validation conditions use periodic requeues without error storms.
 
