@@ -29,6 +29,8 @@ helm upgrade --install kflared ./charts \
 
 KFlared CRDs live in Helm's special `crds/` directory. Helm installs them before templates and deliberately does not upgrade or delete them. Use `--skip-crds` only when a cluster administrator manages the CRDs separately.
 
+Set `namespace.create=true` when a GitOps or rendered-manifest workflow should create the release namespace from the chart. Optional `namespace.labels` and `namespace.annotations` customize it. Direct Helm installs still need `--create-namespace` when the target does not exist because Helm initializes the release namespace before applying chart templates.
+
 The chart intentionally combines Helm's conventional values and template structure with Kubebuilder's authoritative controller resource inventory. It does not include generic application templates such as an Ingress, HTTPRoute, HPA, or test Pod. Generated CRD schemas and RBAC remain sourced from Kustomize, with tests detecting distribution drift.
 
 To inspect the complete rendered chart, include the otherwise omitted CRDs:

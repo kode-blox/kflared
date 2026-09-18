@@ -13,6 +13,11 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
+namespace:
+  create: false
+  labels: {}
+  annotations: {}
+
 serviceAccount:
   create: true
   automount: true

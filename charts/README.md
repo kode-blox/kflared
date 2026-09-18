@@ -16,6 +16,10 @@ helm upgrade --install kflared ./charts \
 
 The chart supports another release namespace. The controller discovers it through the Pod downward API and keeps Cloudflare credentials and generated connector resources in that namespace.
 
+Set `namespace.create=true` when a GitOps or rendered-manifest workflow should create `.Release.Namespace` from the chart. Optional `namespace.labels` and `namespace.annotations` are applied to it.
+
+For a direct Helm install into a namespace that does not exist yet, continue to pass `--create-namespace`. Helm must create its release namespace before it can apply chart templates, so a chart-managed Namespace cannot bootstrap that Helm operation by itself.
+
 By default, create the API token Secret after installation and before a `ClusterCloudflareProvider`:
 
 ```sh

@@ -5,6 +5,7 @@
     "replicaCount",
     "image",
     "kubernetesComponent",
+    "namespace",
     "serviceAccount",
     "rbac",
     "externalSecrets",
@@ -31,6 +32,15 @@
       "minLength": 1,
       "maxLength": 63,
       "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+    },
+    "namespace": {
+      "type": "object",
+      "required": ["create", "labels", "annotations"],
+      "properties": {
+        "create": {"type": "boolean"},
+        "labels": {"type": "object", "additionalProperties": {"type": "string"}},
+        "annotations": {"type": "object", "additionalProperties": {"type": "string"}}
+      }
     },
     "serviceAccount": {
       "type": "object",

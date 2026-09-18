@@ -250,6 +250,8 @@ tasks:
               --kube-version $env:HELM_KUBE_VERSION `
               --set fullnameOverride=custom-controller `
               --set kubernetesComponent=custom `
+              --set namespace.create=true `
+              --set namespace.labels.environment=test `
               --set rbac.helperRoles.enabled=true `
               --set externalSecrets.enabled=true `
               --set externalSecrets.secretStore=example-store `
