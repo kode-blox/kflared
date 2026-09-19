@@ -15,6 +15,11 @@
     "serviceMonitor"
   ],
   "properties": {
+    "global": {
+      "type": "object",
+      "description": "Values shared by a parent chart when KFlared is used as a dependency.",
+      "additionalProperties": true
+    },
     "replicaCount": {
       "type": "integer",
       "minimum": 1
