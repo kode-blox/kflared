@@ -38,9 +38,11 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/recorder"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -75,6 +77,7 @@ type CloudflareTunnelBindingReconciler struct {
 	Cloudflare       cfclient.Factory
 	SystemNamespace  string
 	CloudflaredImage string
+	ControllerClass  string
 }
 
 // +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=cloudflaretunnelbindings,verbs=get;list;watch;update
@@ -91,6 +94,9 @@ func (r *CloudflareTunnelBindingReconciler) Reconcile(ctx context.Context, req c
 	if err := r.Get(ctx, req.NamespacedName, binding); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	if !r.owns(binding.Spec.Controller) {
+		return ctrl.Result{}, nil
+	}
 	if !binding.DeletionTimestamp.IsZero() {
 		return r.finalize(ctx, binding)
 	}
@@ -98,6 +104,9 @@ func (r *CloudflareTunnelBindingReconciler) Reconcile(ctx context.Context, req c
 	provider, hostnames, origin, result, err := r.validateAndPlan(ctx, binding)
 	if err != nil || result != nil {
 		if result != nil {
+			if accepted := apiMeta.FindStatusCondition(binding.Status.Conditions, kflaredv1alpha1.BindingConditionAccepted); accepted != nil && accepted.Reason == "ProviderControllerClassMismatch" {
+				return *result, err
+			}
 			if binding.Status.TunnelID != "" {
 				if deprogramErr := r.deprogramTunnel(ctx, binding); deprogramErr != nil {
 					return *result, errors.Join(err, deprogramErr)
@@ -215,6 +224,10 @@ func (r *CloudflareTunnelBindingReconciler) validateClusterProvider(ctx context.
 	provider := &kflaredv1alpha1.ClusterCloudflareProvider{}
 	if err := r.Get(ctx, types.NamespacedName{Name: binding.Spec.ProviderRef.Name}, provider); err != nil {
 		_, _, _, result, rejectErr := r.rejected(ctx, binding, "ProviderNotFound", "The referenced ClusterCloudflareProvider was not found", client.IgnoreNotFound(err))
+		return nil, result, rejectErr
+	}
+	if provider.Spec.Controller != binding.Spec.Controller {
+		_, _, _, result, rejectErr := r.rejected(ctx, binding, "ProviderControllerClassMismatch", "The referenced ClusterCloudflareProvider belongs to a different controller class", nil)
 		return nil, result, rejectErr
 	}
 	accepted := apiMeta.FindStatusCondition(provider.Status.Conditions, kflaredv1alpha1.ProviderConditionAccepted)
@@ -350,6 +363,9 @@ func (r *CloudflareTunnelBindingReconciler) ensureTunnel(ctx context.Context, ap
 func (r *CloudflareTunnelBindingReconciler) reconcileConnectorSecret(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding, name, token string) error {
 	secret := &corev1.Secret{Name: name, Namespace: r.systemNamespace()}
 	_, err := controllerutil.CreateOrPatch(ctx, r.Client, secret, func() error {
+		if err := verifyChildOwnership(binding, secret); err != nil {
+			return err
+		}
 		secret.Labels = managedLabels(binding)
 		secret.Type = corev1.SecretTypeOpaque
 		secret.Data = map[string][]byte{"token": []byte(token)}
@@ -362,6 +378,9 @@ func (r *CloudflareTunnelBindingReconciler) reconcileConnectorDeployment(ctx con
 	replicas := effectiveReplicas(binding.Spec.ConnectorReplicas)
 	deployment := &appsv1.Deployment{Name: name, Namespace: r.systemNamespace()}
 	_, err := controllerutil.CreateOrPatch(ctx, r.Client, deployment, func() error {
+		if err := verifyChildOwnership(binding, deployment); err != nil {
+			return err
+		}
 		resourceLabels := managedLabels(binding)
 		deployment.Labels = resourceLabels
 		deployment.Spec.Replicas = &replicas
@@ -377,6 +396,9 @@ func (r *CloudflareTunnelBindingReconciler) reconcileConnectorDeployment(ctx con
 func (r *CloudflareTunnelBindingReconciler) reconcilePodDisruptionBudget(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding, name string) error {
 	pdb := &policyv1.PodDisruptionBudget{Name: name, Namespace: r.systemNamespace()}
 	_, err := controllerutil.CreateOrPatch(ctx, r.Client, pdb, func() error {
+		if err := verifyChildOwnership(binding, pdb); err != nil {
+			return err
+		}
 		resourceLabels := managedLabels(binding)
 		pdb.Labels = resourceLabels
 		pdb.Spec.Selector = &metav1.LabelSelector{MatchLabels: resourceLabels}
@@ -406,6 +428,9 @@ func (r *CloudflareTunnelBindingReconciler) reconcileDNSEndpoint(ctx context.Con
 	endpoint.SetName(name)
 	endpoint.SetNamespace(binding.Namespace)
 	_, err = controllerutil.CreateOrPatch(ctx, r.Client, endpoint, func() error {
+		if err := verifyChildOwnership(binding, endpoint); err != nil {
+			return err
+		}
 		endpoint.SetLabels(managedLabels(binding))
 		if err := controllerutil.SetControllerReference(binding, endpoint, r.Scheme); err != nil {
 			return err
@@ -519,6 +544,18 @@ func (r *CloudflareTunnelBindingReconciler) finalize(ctx context.Context, bindin
 	if !controllerutil.ContainsFinalizer(binding, bindingFinalizer) {
 		return ctrl.Result{}, nil
 	}
+	var provider *kflaredv1alpha1.ClusterCloudflareProvider
+	if binding.Status.TunnelID != "" {
+		provider = &kflaredv1alpha1.ClusterCloudflareProvider{}
+		if err := r.Get(ctx, types.NamespacedName{Name: binding.Spec.ProviderRef.Name}, provider); err != nil {
+			if binding.Spec.DeletionPolicy != kflaredv1alpha1.DeletionPolicyRetain || !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, err
+			}
+			provider = nil
+		} else if provider.Spec.Controller != binding.Spec.Controller {
+			return ctrl.Result{}, fmt.Errorf("refusing to finalize binding: referenced ClusterCloudflareProvider belongs to controller class %q", provider.Spec.Controller)
+		}
+	}
 	name := connectorResourceName(binding.UID)
 	objects := []client.Object{
 		&appsv1.Deployment{Name: name, Namespace: r.systemNamespace()},
@@ -526,7 +563,7 @@ func (r *CloudflareTunnelBindingReconciler) finalize(ctx context.Context, bindin
 		&corev1.Secret{Name: name, Namespace: r.systemNamespace()},
 	}
 	for _, object := range objects {
-		if err := r.Delete(ctx, object); err != nil && !apierrors.IsNotFound(err) {
+		if err := r.deleteOwnedChild(ctx, binding, object); err != nil && !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
 	}
@@ -534,9 +571,8 @@ func (r *CloudflareTunnelBindingReconciler) finalize(ctx context.Context, bindin
 		return ctrl.Result{}, err
 	}
 	if binding.Spec.DeletionPolicy != kflaredv1alpha1.DeletionPolicyRetain && binding.Status.TunnelID != "" {
-		provider := &kflaredv1alpha1.ClusterCloudflareProvider{}
-		if err := r.Get(ctx, types.NamespacedName{Name: binding.Spec.ProviderRef.Name}, provider); err != nil {
-			return ctrl.Result{}, err
+		if provider == nil {
+			return ctrl.Result{}, fmt.Errorf("referenced ClusterCloudflareProvider is unavailable")
 		}
 		token, err := r.readAPIToken(ctx, provider)
 		if err != nil {
@@ -567,13 +603,33 @@ func (r *CloudflareTunnelBindingReconciler) deleteDNSEndpoint(ctx context.Contex
 	if err != nil {
 		return err
 	}
-	endpoint := &unstructured.Unstructured{}
-	endpoint.SetAPIVersion(dnsEndpointAPIVersion)
-	endpoint.SetKind(dnsEndpointKind)
-	endpoint.SetName(name)
-	endpoint.SetNamespace(binding.Namespace)
-	err = r.Delete(ctx, endpoint)
+	current := &unstructured.Unstructured{}
+	current.SetAPIVersion(dnsEndpointAPIVersion)
+	current.SetKind(dnsEndpointKind)
+	err = r.Get(ctx, types.NamespacedName{Namespace: binding.Namespace, Name: name}, current)
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if current.GetLabels()[ownerUIDLabel] != string(binding.UID) {
+		return fmt.Errorf("refusing to delete DNSEndpoint %s/%s not owned by this binding", binding.Namespace, name)
+	}
+	err = r.Delete(ctx, current)
 	return client.IgnoreNotFound(err)
+}
+
+func (r *CloudflareTunnelBindingReconciler) deleteOwnedChild(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding, object client.Object) error {
+	key := types.NamespacedName{Namespace: object.GetNamespace(), Name: object.GetName()}
+	current := object.DeepCopyObject().(client.Object)
+	if err := r.Get(ctx, key, current); err != nil {
+		return err
+	}
+	if current.GetLabels()[ownerUIDLabel] != string(binding.UID) {
+		return fmt.Errorf("refusing to delete child %s/%s not owned by this binding", key.Namespace, key.Name)
+	}
+	return r.Delete(ctx, current)
 }
 
 func (r *CloudflareTunnelBindingReconciler) gatewayWinner(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding) (*kflaredv1alpha1.CloudflareTunnelBinding, error) {
@@ -583,7 +639,7 @@ func (r *CloudflareTunnelBindingReconciler) gatewayWinner(ctx context.Context, b
 	}
 	for i := range bindings.Items {
 		other := &bindings.Items[i]
-		if other.DeletionTimestamp.IsZero() && other.UID != binding.UID && other.Spec.GatewayRef.Name == binding.Spec.GatewayRef.Name && planner.BindingPrecedes(other, binding) {
+		if other.Spec.Controller == r.ControllerClass && other.DeletionTimestamp.IsZero() && other.UID != binding.UID && other.Spec.GatewayRef.Name == binding.Spec.GatewayRef.Name && planner.BindingPrecedes(other, binding) {
 			return other, nil
 		}
 	}
@@ -661,7 +717,7 @@ func (r *CloudflareTunnelBindingReconciler) event(binding *kflaredv1alpha1.Cloud
 
 func (r *CloudflareTunnelBindingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&kflaredv1alpha1.CloudflareTunnelBinding{}).
+		For(&kflaredv1alpha1.CloudflareTunnelBinding{}, builder.WithPredicates(bindingClassPredicate(r.ControllerClass))).
 		Watches(&kflaredv1alpha1.ClusterCloudflareProvider{}, handler.EnqueueRequestsFromMapFunc(r.bindingsForObject)).
 		Watches(&gatewayv1.GatewayClass{}, handler.EnqueueRequestsFromMapFunc(r.bindingsForObject)).
 		Watches(&gatewayv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(r.bindingsForObject)).
@@ -680,6 +736,9 @@ func (r *CloudflareTunnelBindingReconciler) bindingsForObject(ctx context.Contex
 	requests := make([]reconcile.Request, 0, len(bindings.Items))
 	for i := range bindings.Items {
 		binding := &bindings.Items[i]
+		if !r.owns(binding.Spec.Controller) {
+			continue
+		}
 		matches := false
 		switch changed := object.(type) {
 		case *kflaredv1alpha1.ClusterCloudflareProvider:
@@ -700,6 +759,17 @@ func (r *CloudflareTunnelBindingReconciler) bindingsForObject(ctx context.Contex
 		}
 	}
 	return requests
+}
+
+func (r *CloudflareTunnelBindingReconciler) owns(controllerClass string) bool {
+	return r.ControllerClass != "" && controllerClass == r.ControllerClass
+}
+
+func bindingClassPredicate(controllerClass string) predicate.Predicate {
+	return predicate.NewPredicateFuncs(func(object client.Object) bool {
+		binding, ok := object.(*kflaredv1alpha1.CloudflareTunnelBinding)
+		return ok && controllerClass != "" && binding.Spec.Controller == controllerClass
+	})
 }
 
 func validHTTPListener(gateway *gatewayv1.Gateway, sectionName string) bool {
@@ -792,6 +862,17 @@ func managedLabels(binding *kflaredv1alpha1.CloudflareTunnelBinding) map[string]
 		managedByLabel: managedByValue,
 		ownerUIDLabel:  string(binding.UID),
 	}
+}
+
+func verifyChildOwnership(binding *kflaredv1alpha1.CloudflareTunnelBinding, child client.Object) error {
+	ownerUID := child.GetLabels()[ownerUIDLabel]
+	if ownerUID != "" && ownerUID != string(binding.UID) {
+		return fmt.Errorf("refusing to manage child %s/%s owned by binding UID %s", child.GetNamespace(), child.GetName(), ownerUID)
+	}
+	if child.GetUID() != "" && ownerUID != string(binding.UID) {
+		return fmt.Errorf("refusing to adopt existing child %s/%s without this binding ownership label", child.GetNamespace(), child.GetName())
+	}
+	return nil
 }
 
 func connectorPodSpec(secretName, image string) corev1.PodSpec {

@@ -6,6 +6,7 @@
     "replicaCount",
     "image",
     "kubernetesComponent",
+    "controllerClass",
     "namespace",
     "serviceAccount",
     "rbac",
@@ -40,6 +41,11 @@
       "maxLength": 63,
       "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
       "description": "Descriptive app.kubernetes.io/component label; it is not used in workload selectors."
+    },
+    "controllerClass": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Required controller ownership class. Must match spec.controller on managed resources."
     },
     "namespace": {
       "type": "object",

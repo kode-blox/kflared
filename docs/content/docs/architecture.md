@@ -5,6 +5,10 @@ description: Understand KFlared's integration boundary, traffic path, and owners
 
 `ClusterCloudflareProvider` describes an account trust boundary. `CloudflareTunnelBinding` binds one listener of one Traefik-managed Gateway to one controller-owned, remotely managed Cloudflare Tunnel. A Gateway does not represent a tunnel in this integration mode.
 
+Each KFlared manager requires an explicit controller class. Providers and bindings declare that class in `spec.controller`; the manager reconciles only exact matches, and a binding must also reference a provider with the same class. This allows separately configured KFlared instances to coexist in one cluster. The class is immutable on each resource, so migration between instances requires recreating resources.
+
+Leader-election lease names are derived from the controller class, so different classes do not suppress each other when they share a namespace. Finalizer names remain stable rather than embedding the class. The manager checks the immutable class before any finalization work, generated Kubernetes children are identified by the binding UID, and cleanup refuses to delete a child carrying another binding's ownership label. Remote tunnel names also include the binding UID. Together these boundaries prevent one class from adopting or cleaning up another class's resources while avoiding class-derived finalizer names that could strand objects after configuration changes.
+
 ```text
 Cloudflare edge
   -> remotely managed Cloudflare Tunnel

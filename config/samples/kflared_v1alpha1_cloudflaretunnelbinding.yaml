@@ -7,6 +7,7 @@ metadata:
   name: public
   namespace: my-app
 spec:
+  controller: kflared
   providerRef:
     name: default
   gatewayRef:

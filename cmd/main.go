@@ -17,9 +17,13 @@ limitations under the License.
 package main
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
+	"errors"
 	"flag"
 	"os"
+	"strings"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -68,6 +72,7 @@ func main() {
 	var webhookCertPath, webhookCertName, webhookCertKey string
 	var webhookPort int
 	var enableLeaderElection bool
+	var controllerClass string
 	var probeAddr string
 	var systemNamespace string
 	var secureMetrics bool
@@ -78,6 +83,8 @@ func main() {
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.StringVar(&systemNamespace, "system-namespace", os.Getenv("POD_NAMESPACE"),
 		"Namespace containing Cloudflare API token and generated connector resources. Defaults to POD_NAMESPACE.")
+	flag.StringVar(&controllerClass, "controller-class", "",
+		"Required controller class. Only resources with spec.controller equal to this value are reconciled.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
@@ -99,8 +106,11 @@ func main() {
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
-
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	if err := validateControllerClass(controllerClass); err != nil {
+		setupLog.Error(err, "Invalid configuration")
+		os.Exit(1)
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -181,7 +191,7 @@ func main() {
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "ea6a77cd.kodeblox.com",
+		LeaderElectionID:       leaderElectionID(controllerClass),
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -204,6 +214,7 @@ func main() {
 		Scheme:          mgr.GetScheme(),
 		Cloudflare:      cfclient.SDKFactory{},
 		SystemNamespace: systemNamespace,
+		ControllerClass: controllerClass,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "clustercloudflareprovider")
 		os.Exit(1)
@@ -215,6 +226,7 @@ func main() {
 		Recorder:        mgr.GetEventRecorder("kflared"),
 		Cloudflare:      cfclient.SDKFactory{},
 		SystemNamespace: systemNamespace,
+		ControllerClass: controllerClass,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "cloudflaretunnelbinding")
 		os.Exit(1)
@@ -235,4 +247,16 @@ func main() {
 		setupLog.Error(err, "Failed to run manager")
 		os.Exit(1)
 	}
+}
+
+func leaderElectionID(controllerClass string) string {
+	digest := sha256.Sum256([]byte(controllerClass))
+	return "kflared-" + hex.EncodeToString(digest[:]) + ".kodeblox.com"
+}
+
+func validateControllerClass(controllerClass string) error {
+	if strings.TrimSpace(controllerClass) == "" {
+		return errors.New("--controller-class is required and must not be empty")
+	}
+	return nil
 }

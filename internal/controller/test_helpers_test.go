@@ -20,6 +20,7 @@ import (
 	"context"
 	"slices"
 
+	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	kflaredv1alpha1 "github.com/kode-blox/kflared/api/v1alpha1"
@@ -27,7 +28,10 @@ import (
 )
 
 const (
+	testControllerClass                = "test-class"
 	testDefaultName                    = "default"
+	testGatewayResourceName            = "gateway"
+	testOtherControllerClass           = "other-class"
 	testTenantName                     = "tenant"
 	testGatewayName                    = "traefik"
 	testHTTPSectionName                = "http"
@@ -44,6 +48,7 @@ const (
 	testConnectorReconciliationMessage = "Connector reconciliation could not complete"
 	testManagedResourceName            = "kflared-111111112222"
 	testBindingTunnelName              = "binding-tunnel"
+	testWindowsOS                      = "windows"
 )
 
 type fakeCloudflareFactory struct {
@@ -54,6 +59,7 @@ func (f fakeCloudflareFactory) New(_, _ string) cfclient.Client { return f.clien
 
 type fakeCloudflareClient struct {
 	validateErr   error
+	validateCalls int
 	getTunnelErr  error
 	getConfigErr  error
 	getTokenErr   error
@@ -66,7 +72,10 @@ type fakeCloudflareClient struct {
 	deleteCalls   int
 }
 
-func (f *fakeCloudflareClient) Validate(context.Context) error { return f.validateErr }
+func (f *fakeCloudflareClient) Validate(context.Context) error {
+	f.validateCalls++
+	return f.validateErr
+}
 
 func (f *fakeCloudflareClient) FindTunnelByName(_ context.Context, name string) (*cfclient.Tunnel, error) {
 	if f.tunnel != nil && f.tunnel.Name == name {
@@ -131,6 +140,7 @@ func readyClusterProvider() *kflaredv1alpha1.ClusterCloudflareProvider {
 	return &kflaredv1alpha1.ClusterCloudflareProvider{
 		Name: testDefaultName, Generation: 1,
 		Spec: kflaredv1alpha1.ClusterCloudflareProviderSpec{
+			Controller:               testControllerClass,
 			AccountID:                "0123456789abcdef0123456789abcdef",
 			APITokenSecretRef:        kflaredv1alpha1.SecretKeyReference{Name: testAPITokenSecretName, Key: testAPITokenSecretKey},
 			AllowedDNSZones:          []string{"example.com"},
@@ -141,4 +151,12 @@ func readyClusterProvider() *kflaredv1alpha1.ClusterCloudflareProvider {
 			currentCondition(kflaredv1alpha1.ProviderConditionCredentialsValid),
 		}},
 	}
+}
+
+func testDeployment(name, namespace string, labels map[string]string) *appsv1.Deployment {
+	deployment := &appsv1.Deployment{}
+	deployment.Name = name
+	deployment.Namespace = namespace
+	deployment.Labels = labels
+	return deployment
 }

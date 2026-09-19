@@ -49,7 +49,7 @@ var (
 )
 
 func TestControllers(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == testWindowsOS {
 		t.Skip("controller-runtime envtest cannot terminate control-plane processes on Windows; CI runs this suite on Linux")
 	}
 	RegisterFailHandler(Fail)

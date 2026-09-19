@@ -11,8 +11,13 @@ KFlared CRDs are plain YAML in Helm's special `crds/` directory. Helm installs t
 ```sh
 helm upgrade --install kflared ./charts \
   --namespace kflared \
+  --set controllerClass=kflared \
   --create-namespace
 ```
+
+`controllerClass` is required and has no default. Choose a stable class for this KFlared installation and set the same value in `spec.controller` on each provider and binding it owns. Different KFlared installations in one cluster must use distinct classes.
+
+When upgrading resources created before controller classes existed, do not rely on `helm upgrade` to update the CRDs. Follow the ordered CRD sync, resource backfill, verification, and controller rollout procedure in the [main installation documentation](../docs/content/docs/installation.md#upgrade-from-a-release-without-controller-classes).
 
 The chart supports another release namespace. The controller discovers it through the Pod downward API and keeps Cloudflare credentials and generated connector resources in that namespace.
 

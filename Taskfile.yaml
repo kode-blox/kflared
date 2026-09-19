@@ -231,7 +231,7 @@ tasks:
     desc: Lint the supported Helm chart
     deps: [require-pwsh]
     cmds:
-      - '"{{.HELM}}" lint ./charts --strict'
+      - '"{{.HELM}}" lint ./charts --strict --set controllerClass=kflared'
 
   helm-template:
     desc: Render the supported Helm chart with default and optional resources
@@ -243,6 +243,7 @@ tasks:
       - cmd: |
           pwsh -NoLogo -NoProfile -NonInteractive -Command '
             & $env:HELM template kflared ./charts --namespace kflared `
+              --set controllerClass=kflared `
               --kube-version $env:HELM_KUBE_VERSION | Out-Null
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -253,6 +254,7 @@ tasks:
               --set namespace.labels.environment=test `
               --set namespace.annotations.owner=ci `
               --set kubernetesComponent=custom `
+              --set controllerClass=custom `
               --set rbac.helperRoles.enabled=true `
               --set externalSecrets.enabled=true `
               --set externalSecrets.secretStore=example-store `

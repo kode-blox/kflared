@@ -47,6 +47,7 @@ spec:
           command:
             - /app/kflared
           args:
+            - {{ printf "--controller-class=%s" .Values.controllerClass | quote }}
             {{- if .Values.leaderElection.enabled }}
             - --leader-elect
             {{- end }}

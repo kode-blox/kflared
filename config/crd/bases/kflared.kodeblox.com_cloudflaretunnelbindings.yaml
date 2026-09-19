@@ -60,6 +60,14 @@ spec:
                 maximum: 10
                 minimum: 2
                 type: integer
+              controller:
+                description: controller identifies the KFlared controller class that
+                  owns this binding.
+                minLength: 1
+                type: string
+                x-kubernetes-validations:
+                - message: controller is immutable
+                  rule: self == oldSelf
               deletionPolicy:
                 default: Delete
                 description: |-
@@ -115,6 +123,7 @@ spec:
                 - message: providerRef is immutable
                   rule: self == oldSelf
             required:
+            - controller
             - gatewayRef
             - gatewayServiceRef
             - providerRef

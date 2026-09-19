@@ -9,6 +9,9 @@ image:
 
 kubernetesComponent: controller-manager
 
+# Required ownership class; must match spec.controller on managed resources.
+controllerClass: ""
+
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""

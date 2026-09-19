@@ -19,10 +19,13 @@ package controller
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -51,7 +54,7 @@ func TestProviderReconcileValidatesCredentials(t *testing.T) {
 		Data: map[string][]byte{testAPITokenSecretKey: []byte("secret-token")},
 	}
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(provider).WithObjects(provider, secret).Build()
-	reconciler := &ClusterCloudflareProviderReconciler{Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: &fakeCloudflareClient{}}}
+	reconciler := &ClusterCloudflareProviderReconciler{ControllerClass: testControllerClass, Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: &fakeCloudflareClient{}}}
 	request := ctrl.Request{Name: provider.Name}
 
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
@@ -70,6 +73,57 @@ func TestProviderReconcileValidatesCredentials(t *testing.T) {
 	}
 	if !conditionTrue(actual.Status.Conditions, actual.Generation, kflaredv1alpha1.ProviderConditionCredentialsValid) {
 		t.Fatalf("provider CredentialsValid condition is not true: %#v", actual.Status.Conditions)
+	}
+}
+
+func TestProviderReconcileIgnoresOtherControllerClassBeforeDeletionEffects(t *testing.T) {
+	scheme := providerTestScheme(t)
+	provider := readyClusterProvider()
+	provider.Spec.Controller = testOtherControllerClass
+	provider.Finalizers = []string{clusterProviderFinalizer}
+	provider.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(provider).WithObjects(provider).Build()
+	cloudflare := &fakeCloudflareClient{}
+	reconciler := &ClusterCloudflareProviderReconciler{ControllerClass: testControllerClass, Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: cloudflare}}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{Name: provider.Name}); err != nil {
+		t.Fatalf("ignore foreign provider: %v", err)
+	}
+	actual := &kflaredv1alpha1.ClusterCloudflareProvider{}
+	if err := kubeClient.Get(context.Background(), client.ObjectKeyFromObject(provider), actual); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(actual.Finalizers, []string{clusterProviderFinalizer}) || len(actual.Status.Conditions) != len(provider.Status.Conditions) {
+		t.Fatalf("foreign provider mutated: finalizers=%v status=%#v", actual.Finalizers, actual.Status)
+	}
+	if cloudflare.validateCalls != 0 {
+		t.Fatalf("foreign provider caused %d Cloudflare validations", cloudflare.validateCalls)
+	}
+}
+
+func TestProviderFinalizationIgnoresBindingsFromOtherControllerClasses(t *testing.T) {
+	scheme := providerTestScheme(t)
+	provider := readyClusterProvider()
+	provider.Finalizers = []string{clusterProviderFinalizer}
+	provider.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+	foreignBinding := &kflaredv1alpha1.CloudflareTunnelBinding{}
+	foreignBinding.Name = "foreign"
+	foreignBinding.Namespace = testTenantName
+	foreignBinding.Spec = kflaredv1alpha1.CloudflareTunnelBindingSpec{
+		Controller:  testOtherControllerClass,
+		ProviderRef: kflaredv1alpha1.LocalReference{Name: provider.Name},
+	}
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(provider).
+		WithObjects(provider, foreignBinding).Build()
+	reconciler := &ClusterCloudflareProviderReconciler{ControllerClass: testControllerClass, Client: kubeClient, Scheme: scheme}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{Name: provider.Name}); err != nil {
+		t.Fatalf("finalize provider despite foreign binding: %v", err)
+	}
+	actual := &kflaredv1alpha1.ClusterCloudflareProvider{}
+	if err := kubeClient.Get(context.Background(), client.ObjectKeyFromObject(provider), actual); !apierrors.IsNotFound(err) {
+		t.Fatalf("provider remains after class-scoped finalization: err=%v object=%#v", err, actual)
 	}
 }
 
@@ -105,9 +159,10 @@ func TestProviderReconcileClassifiesCredentialValidationFailures(t *testing.T) {
 			validationCause := errors.New("sensitive validation response body")
 			validationErr := tt.validation(validationCause)
 			reconciler := &ClusterCloudflareProviderReconciler{
-				Client:     kubeClient,
-				Scheme:     scheme,
-				Cloudflare: fakeCloudflareFactory{client: &fakeCloudflareClient{validateErr: validationErr}},
+				ControllerClass: testControllerClass,
+				Client:          kubeClient,
+				Scheme:          scheme,
+				Cloudflare:      fakeCloudflareFactory{client: &fakeCloudflareClient{validateErr: validationErr}},
 			}
 			request := ctrl.Request{Name: provider.Name}
 
@@ -141,9 +196,10 @@ func TestProviderReconcilePreservesValidationAndStatusPatchErrors(t *testing.T) 
 	validationErr := errors.New("validation failed")
 	patchErr := errors.New("status patch failed")
 	reconciler := &ClusterCloudflareProviderReconciler{
-		Client:     statusPatchFailingClient{Client: baseClient, err: patchErr},
-		Scheme:     scheme,
-		Cloudflare: fakeCloudflareFactory{client: &fakeCloudflareClient{validateErr: validationErr}},
+		ControllerClass: testControllerClass,
+		Client:          statusPatchFailingClient{Client: baseClient, err: patchErr},
+		Scheme:          scheme,
+		Cloudflare:      fakeCloudflareFactory{client: &fakeCloudflareClient{validateErr: validationErr}},
 	}
 
 	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{Name: provider.Name})

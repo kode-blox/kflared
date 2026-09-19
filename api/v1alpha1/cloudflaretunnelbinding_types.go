@@ -60,6 +60,11 @@ type GatewayServiceReference struct {
 
 // CloudflareTunnelBindingSpec defines the desired tunnel integration.
 type CloudflareTunnelBindingSpec struct {
+	// controller identifies the KFlared controller class that owns this binding.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="controller is immutable"
+	Controller string `json:"controller"`
+
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="providerRef is immutable"
 	ProviderRef LocalReference `json:"providerRef"`
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="gatewayRef is immutable"

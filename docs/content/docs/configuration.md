@@ -13,6 +13,7 @@ kind: ClusterCloudflareProvider
 metadata:
   name: default
 spec:
+  controller: kflared
   accountID: 0123456789abcdef0123456789abcdef
   apiTokenSecretRef:
     name: cloudflare-api-token
@@ -26,6 +27,7 @@ spec:
 
 | Field                      | Purpose                                                                             |
 | -------------------------- | ----------------------------------------------------------------------------------- |
+| `controller`               | Required, immutable KFlared controller class that owns this provider.               |
 | `accountID`                | Cloudflare account that owns tunnels. The field is immutable.                       |
 | `apiTokenSecretRef`        | Secret name and key in the KFlared system namespace.                                |
 | `allowedDNSZones`          | Concrete suffix allow-list for published hostnames. At least one zone is required.  |
@@ -42,6 +44,7 @@ metadata:
   name: public
   namespace: my-app
 spec:
+  controller: kflared
   providerRef:
     name: default
   gatewayRef:
@@ -56,6 +59,7 @@ spec:
 
 | Field               | Purpose                                                                                     |
 | ------------------- | ------------------------------------------------------------------------------------------- |
+| `controller`        | Required, immutable KFlared controller class that owns this binding.                         |
 | `providerRef.name`  | Cluster-scoped provider to use. The reference is immutable.                                 |
 | `gatewayRef`        | Existing Gateway and HTTP listener in the binding namespace. The reference is immutable.    |
 | `gatewayServiceRef` | Internal, non-headless Traefik Service and port used as the tunnel origin.                  |
@@ -63,6 +67,8 @@ spec:
 | `deletionPolicy`    | `Delete` removes the remote tunnel; `Retain` leaves it and its remote configuration intact. |
 
 The binding, Gateway, HTTPRoutes, and origin Service must share a namespace. Eligible routes must expose concrete, non-wildcard hostnames and report current `Accepted=True` and `ResolvedRefs=True` status for the selected Gateway listener.
+
+The binding's `controller` must match both the running manager's `controllerClass` and its referenced provider's `controller`. A mismatch prevents reconciliation. For resources created before this field existed, install the new CRDs first while the old controller is still running, explicitly patch matching `spec.controller` values onto every provider and binding, and only then roll out the new controller with that class. Kubernetes does not evaluate the field-scoped immutability transition while the old value is absent, but later changes are rejected. Recreate a resource to change its class after migration.
 
 ## Status
 

@@ -38,6 +38,11 @@ type SecretKeyReference struct {
 
 // ClusterCloudflareProviderSpec defines a Cloudflare account and the tenants allowed to use it.
 type ClusterCloudflareProviderSpec struct {
+	// controller identifies the KFlared controller class that owns this provider.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="controller is immutable"
+	Controller string `json:"controller"`
+
 	// accountID is the Cloudflare account identifier.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=32

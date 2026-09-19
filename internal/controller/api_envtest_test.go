@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"go/build"
 	"os"
@@ -25,16 +26,193 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/wait"
+	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	kflaredv1alpha1 "github.com/kode-blox/kflared/api/v1alpha1"
 )
 
+func TestControllerClassBackfillAfterCRDUpgrade(t *testing.T) {
+	if runtime.GOOS == testWindowsOS {
+		t.Skip("controller-runtime envtest cannot terminate control-plane processes on Windows; CI runs this test on Linux")
+	}
+	assets, err := envtestAssetsDirectory()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	providerCRD := readCRD(t, filepath.Join("..", "..", "config", "crd", "bases", "kflared.kodeblox.com_clustercloudflareproviders.yaml"))
+	bindingCRD := readCRD(t, filepath.Join("..", "..", "config", "crd", "bases", "kflared.kodeblox.com_cloudflaretunnelbindings.yaml"))
+	legacyCRDDirectory := t.TempDir()
+	writeLegacyCRD(t, legacyCRDDirectory, providerCRD)
+	writeLegacyCRD(t, legacyCRDDirectory, bindingCRD)
+
+	environment := &envtest.Environment{
+		BinaryAssetsDirectory: assets,
+		CRDDirectoryPaths:     []string{legacyCRDDirectory},
+		ErrorIfCRDPathMissing: true,
+	}
+	config, err := environment.Start()
+	if err != nil {
+		t.Fatalf("start envtest: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := environment.Stop(); err != nil {
+			t.Errorf("stop envtest: %v", err)
+		}
+	})
+
+	scheme := bindingTestScheme(t)
+	kubeClient, err := client.New(config, client.Options{Scheme: scheme})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	// These objects represent resources that were persisted before spec.controller
+	// existed in the CRD. The legacy schemas deliberately omit that property.
+	legacyProvider := readyClusterProvider()
+	legacyProvider.Name = "legacy-provider"
+	createWithoutController(t, ctx, kubeClient, legacyProvider)
+	legacyBinding := &kflaredv1alpha1.CloudflareTunnelBinding{}
+	legacyBinding.Name = "legacy-binding"
+	legacyBinding.Namespace = testDefaultName
+	legacyBinding.Spec = kflaredv1alpha1.CloudflareTunnelBindingSpec{
+		ProviderRef:       kflaredv1alpha1.LocalReference{Name: legacyProvider.Name},
+		GatewayRef:        kflaredv1alpha1.GatewayReference{Name: testGatewayResourceName, SectionName: testHTTPSectionName},
+		GatewayServiceRef: kflaredv1alpha1.GatewayServiceReference{Name: testGatewayName, Port: intstr.FromInt32(80)},
+	}
+	createWithoutController(t, ctx, kubeClient, legacyBinding)
+
+	crdClient, err := apiextensionsclient.NewForConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upgradeCRD(t, ctx, crdClient, providerCRD)
+	upgradeCRD(t, ctx, crdClient, bindingCRD)
+
+	storedProvider := &kflaredv1alpha1.ClusterCloudflareProvider{}
+	if err := kubeClient.Get(ctx, client.ObjectKeyFromObject(legacyProvider), storedProvider); err != nil {
+		t.Fatal(err)
+	}
+	storedProvider.Spec.Controller = testControllerClass
+	if err := kubeClient.Update(ctx, storedProvider); err != nil {
+		t.Fatalf("backfill provider controller after CRD upgrade: %v", err)
+	}
+	storedProvider.Spec.Controller = testOtherControllerClass
+	if err := kubeClient.Update(ctx, storedProvider); err == nil {
+		t.Fatal("provider controller mutation after backfill unexpectedly passed CRD validation")
+	}
+
+	storedBinding := &kflaredv1alpha1.CloudflareTunnelBinding{}
+	if err := kubeClient.Get(ctx, client.ObjectKeyFromObject(legacyBinding), storedBinding); err != nil {
+		t.Fatal(err)
+	}
+	storedBinding.Spec.Controller = testControllerClass
+	if err := kubeClient.Update(ctx, storedBinding); err != nil {
+		t.Fatalf("backfill binding controller after CRD upgrade: %v", err)
+	}
+	storedBinding.Spec.Controller = testOtherControllerClass
+	if err := kubeClient.Update(ctx, storedBinding); err == nil {
+		t.Fatal("binding controller mutation after backfill unexpectedly passed CRD validation")
+	}
+}
+
+func readCRD(t *testing.T, path string) *apiextensionsv1.CustomResourceDefinition {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsonContent, err := utilyaml.ToJSON(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	if err := json.Unmarshal(jsonContent, crd); err != nil {
+		t.Fatal(err)
+	}
+	return crd
+}
+
+func writeLegacyCRD(t *testing.T, directory string, current *apiextensionsv1.CustomResourceDefinition) {
+	t.Helper()
+	legacy := current.DeepCopy()
+	schema := legacy.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
+	delete(schema.Properties, "controller")
+	filteredRequired := schema.Required[:0]
+	for _, field := range schema.Required {
+		if field != "controller" {
+			filteredRequired = append(filteredRequired, field)
+		}
+	}
+	schema.Required = filteredRequired
+	legacy.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"] = schema
+	content, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, legacy.Name+".json"), content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func createWithoutController(t *testing.T, ctx context.Context, kubeClient client.Client, object client.Object) {
+	t.Helper()
+	content, err := k8sruntime.DefaultUnstructuredConverter.ToUnstructured(object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unstructured.RemoveNestedField(content, "spec", "controller")
+	legacy := &unstructured.Unstructured{Object: content}
+	legacy.SetAPIVersion(kflaredv1alpha1.GroupVersion.String())
+	switch object.(type) {
+	case *kflaredv1alpha1.ClusterCloudflareProvider:
+		legacy.SetKind("ClusterCloudflareProvider")
+	case *kflaredv1alpha1.CloudflareTunnelBinding:
+		legacy.SetKind("CloudflareTunnelBinding")
+	default:
+		t.Fatalf("unsupported legacy object type %T", object)
+	}
+	if err := kubeClient.Create(ctx, legacy); err != nil {
+		t.Fatalf("create legacy %s: %v", legacy.GetKind(), err)
+	}
+}
+
+func upgradeCRD(t *testing.T, ctx context.Context, crdClient *apiextensionsclient.Clientset, current *apiextensionsv1.CustomResourceDefinition) {
+	t.Helper()
+	stored, err := crdClient.ApiextensionsV1().CustomResourceDefinitions().Get(ctx, current.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored.Spec = current.Spec
+	updated, err := crdClient.ApiextensionsV1().CustomResourceDefinitions().Update(ctx, stored, metav1.UpdateOptions{})
+	if err != nil {
+		t.Fatalf("upgrade CRD %s: %v", current.Name, err)
+	}
+	if err := wait.PollUntilContextTimeout(ctx, 10*time.Millisecond, 10*time.Second, true, func(ctx context.Context) (bool, error) {
+		observed, err := crdClient.ApiextensionsV1().CustomResourceDefinitions().Get(ctx, current.Name, metav1.GetOptions{})
+		if err != nil {
+			return false, err
+		}
+		return observed.Status.ObservedGeneration >= updated.Generation, nil
+	}); err != nil {
+		t.Fatalf("wait for upgraded CRD %s: %v", current.Name, err)
+	}
+}
+
 func TestCRDDefaultsAndImmutableOwnershipFields(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == testWindowsOS {
 		t.Skip("controller-runtime envtest cannot terminate control-plane processes on Windows; CI runs this test on Linux")
 	}
 	assets, err := envtestAssetsDirectory()
@@ -74,11 +252,26 @@ func TestCRDDefaultsAndImmutableOwnershipFields(t *testing.T) {
 	if err := kubeClient.Update(ctx, provider); err == nil {
 		t.Fatal("accountID mutation unexpectedly passed CRD validation")
 	}
+	storedProvider := &kflaredv1alpha1.ClusterCloudflareProvider{}
+	if err := kubeClient.Get(ctx, client.ObjectKeyFromObject(provider), storedProvider); err != nil {
+		t.Fatal(err)
+	}
+	storedProvider.Spec.Controller = testOtherControllerClass
+	if err := kubeClient.Update(ctx, storedProvider); err == nil {
+		t.Fatal("controller class mutation unexpectedly passed CRD validation")
+	}
+	emptyProvider := readyClusterProvider()
+	emptyProvider.Name = "empty-controller"
+	emptyProvider.Spec.Controller = ""
+	if err := kubeClient.Create(ctx, emptyProvider); err == nil {
+		t.Fatal("empty provider controller class unexpectedly passed CRD validation")
+	}
 	tooManyReplicas := &kflaredv1alpha1.CloudflareTunnelBinding{
 		Name: "too-many-replicas", Namespace: testDefaultName,
 		Spec: kflaredv1alpha1.CloudflareTunnelBindingSpec{
+			Controller:        testControllerClass,
 			ProviderRef:       kflaredv1alpha1.LocalReference{Name: testDefaultName},
-			GatewayRef:        kflaredv1alpha1.GatewayReference{Name: "gateway", SectionName: testHTTPSectionName},
+			GatewayRef:        kflaredv1alpha1.GatewayReference{Name: testGatewayResourceName, SectionName: testHTTPSectionName},
 			GatewayServiceRef: kflaredv1alpha1.GatewayServiceReference{Name: testGatewayName, Port: intstr.FromInt32(80)},
 			ConnectorReplicas: 11,
 		},
@@ -86,12 +279,18 @@ func TestCRDDefaultsAndImmutableOwnershipFields(t *testing.T) {
 	if err := kubeClient.Create(ctx, tooManyReplicas); err == nil {
 		t.Fatal("connectorReplicas above ten unexpectedly passed CRD validation")
 	}
+	tooManyReplicas.Spec.Controller = ""
+	tooManyReplicas.Spec.ConnectorReplicas = 2
+	if err := kubeClient.Create(ctx, tooManyReplicas); err == nil {
+		t.Fatal("empty binding controller class unexpectedly passed CRD validation")
+	}
 
 	binding := &kflaredv1alpha1.CloudflareTunnelBinding{
 		Name: "defaults", Namespace: testDefaultName,
 		Spec: kflaredv1alpha1.CloudflareTunnelBindingSpec{
+			Controller:        testControllerClass,
 			ProviderRef:       kflaredv1alpha1.LocalReference{Name: testDefaultName},
-			GatewayRef:        kflaredv1alpha1.GatewayReference{Name: "gateway", SectionName: testHTTPSectionName},
+			GatewayRef:        kflaredv1alpha1.GatewayReference{Name: testGatewayResourceName, SectionName: testHTTPSectionName},
 			GatewayServiceRef: kflaredv1alpha1.GatewayServiceReference{Name: testGatewayName, Port: intstr.FromInt32(80)},
 		},
 	}
@@ -105,9 +304,50 @@ func TestCRDDefaultsAndImmutableOwnershipFields(t *testing.T) {
 	if actual.Spec.ConnectorReplicas != 2 || actual.Spec.DeletionPolicy != kflaredv1alpha1.DeletionPolicyDelete {
 		t.Fatalf("defaults replicas=%d deletionPolicy=%q", actual.Spec.ConnectorReplicas, actual.Spec.DeletionPolicy)
 	}
+	actual.Spec.Controller = testOtherControllerClass
+	if err := kubeClient.Update(ctx, actual); err == nil {
+		t.Fatal("binding controller class mutation unexpectedly passed CRD validation")
+	}
+	if err := kubeClient.Get(ctx, client.ObjectKeyFromObject(binding), actual); err != nil {
+		t.Fatal(err)
+	}
 	actual.Spec.GatewayRef.SectionName = "other"
 	if err := kubeClient.Update(ctx, actual); err == nil {
 		t.Fatal("gatewayRef mutation unexpectedly passed CRD validation")
+	}
+
+	missingProvider := readyClusterProvider()
+	missingProvider.Name = "missing-controller"
+	providerObject, err := k8sruntime.DefaultUnstructuredConverter.ToUnstructured(missingProvider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delete(providerObject["spec"].(map[string]any), "controller")
+	providerUnstructured := &unstructured.Unstructured{Object: providerObject}
+	providerUnstructured.SetAPIVersion(kflaredv1alpha1.GroupVersion.String())
+	providerUnstructured.SetKind("ClusterCloudflareProvider")
+	if err := kubeClient.Create(ctx, providerUnstructured); err == nil {
+		t.Fatal("provider without controller unexpectedly passed CRD validation")
+	}
+
+	missingBinding := &kflaredv1alpha1.CloudflareTunnelBinding{}
+	missingBinding.Name = "missing-controller"
+	missingBinding.Namespace = testDefaultName
+	missingBinding.Spec = kflaredv1alpha1.CloudflareTunnelBindingSpec{
+		ProviderRef:       kflaredv1alpha1.LocalReference{Name: testDefaultName},
+		GatewayRef:        kflaredv1alpha1.GatewayReference{Name: testGatewayResourceName, SectionName: testHTTPSectionName},
+		GatewayServiceRef: kflaredv1alpha1.GatewayServiceReference{Name: testGatewayName, Port: intstr.FromInt32(80)},
+	}
+	bindingObject, err := k8sruntime.DefaultUnstructuredConverter.ToUnstructured(missingBinding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delete(bindingObject["spec"].(map[string]any), "controller")
+	missingBindingUnstructured := &unstructured.Unstructured{Object: bindingObject}
+	missingBindingUnstructured.SetAPIVersion(kflaredv1alpha1.GroupVersion.String())
+	missingBindingUnstructured.SetKind("CloudflareTunnelBinding")
+	if err := kubeClient.Create(ctx, missingBindingUnstructured); err == nil {
+		t.Fatal("binding without controller unexpectedly passed CRD validation")
 	}
 }
 

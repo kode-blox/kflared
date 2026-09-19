@@ -58,6 +58,8 @@ Project automation requires Go and PowerShell 7 or newer. Task is pinned in the 
 ./task.ps1 deploy IMG=<registry>/kflared:<tag>
 ```
 
+The checked-in Kustomize manager manifest uses the `kflared` controller class. Set `spec.controller: kflared` on each provider and binding it owns. Helm installations must set the required `controllerClass` value explicitly and use that same value in their resources.
+
 Create a provider, label an allowed tenant namespace, and create a binding. Adapt the examples under [`config/samples`](config/samples) to the actual account ID, DNS zones, Gateway, listener, and Traefik Service.
 
 ```sh

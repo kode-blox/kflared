@@ -61,6 +61,7 @@ spec:
       - command:
         - /app/kflared
         args:
+          - --controller-class=kflared
           - --leader-elect
           - --health-probe-bind-address=:8081
         image: controller:latest

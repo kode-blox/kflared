@@ -30,8 +30,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	kflaredv1alpha1 "github.com/kode-blox/kflared/api/v1alpha1"
 	cfclient "github.com/kode-blox/kflared/internal/cloudflare"
@@ -49,6 +51,7 @@ type ClusterCloudflareProviderReconciler struct {
 	Scheme          *runtime.Scheme
 	Cloudflare      cfclient.Factory
 	SystemNamespace string
+	ControllerClass string
 }
 
 // +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=clustercloudflareproviders,verbs=get;list;watch;update
@@ -60,6 +63,9 @@ func (r *ClusterCloudflareProviderReconciler) Reconcile(ctx context.Context, req
 	provider := &kflaredv1alpha1.ClusterCloudflareProvider{}
 	if err := r.Get(ctx, req.NamespacedName, provider); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if !r.owns(provider.Spec.Controller) {
+		return ctrl.Result{}, nil
 	}
 
 	if !provider.DeletionTimestamp.IsZero() {
@@ -133,12 +139,23 @@ func (r *ClusterCloudflareProviderReconciler) finalize(ctx context.Context, prov
 		return ctrl.Result{}, err
 	}
 	for i := range bindings.Items {
-		if bindings.Items[i].Spec.ProviderRef.Name == provider.Name {
+		if bindings.Items[i].Spec.Controller == r.ControllerClass && bindings.Items[i].Spec.ProviderRef.Name == provider.Name {
 			return ctrl.Result{}, fmt.Errorf("provider is still referenced by CloudflareTunnelBinding %s/%s", bindings.Items[i].Namespace, bindings.Items[i].Name)
 		}
 	}
 	controllerutil.RemoveFinalizer(provider, clusterProviderFinalizer)
 	return ctrl.Result{}, r.Update(ctx, provider)
+}
+
+func (r *ClusterCloudflareProviderReconciler) owns(controllerClass string) bool {
+	return r.ControllerClass != "" && controllerClass == r.ControllerClass
+}
+
+func clusterProviderClassPredicate(controllerClass string) predicate.Predicate {
+	return predicate.NewPredicateFuncs(func(object client.Object) bool {
+		provider, ok := object.(*kflaredv1alpha1.ClusterCloudflareProvider)
+		return ok && controllerClass != "" && provider.Spec.Controller == controllerClass
+	})
 }
 
 func (r *ClusterCloudflareProviderReconciler) NamespaceAllowed(provider *kflaredv1alpha1.ClusterCloudflareProvider, namespace *corev1.Namespace) (bool, error) {
@@ -165,7 +182,7 @@ func (r *ClusterCloudflareProviderReconciler) systemNamespace() string {
 
 func (r *ClusterCloudflareProviderReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&kflaredv1alpha1.ClusterCloudflareProvider{}).
+		For(&kflaredv1alpha1.ClusterCloudflareProvider{}, builder.WithPredicates(clusterProviderClassPredicate(r.ControllerClass))).
 		Named("clustercloudflareprovider").
 		Complete(r)
 }

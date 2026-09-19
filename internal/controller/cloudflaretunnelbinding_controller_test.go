@@ -21,6 +21,7 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,6 +40,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	kflaredv1alpha1 "github.com/kode-blox/kflared/api/v1alpha1"
@@ -93,7 +95,7 @@ func TestBindingReconcileCreatesIdempotentTunnelAndHardenedConnectors(t *testing
 		WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.ClusterCloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}, &appsv1.Deployment{}).
 		WithObjects(objects...).Build()
 	cloudflare := &fakeCloudflareClient{token: testConnectorToken}
-	reconciler := &CloudflareTunnelBindingReconciler{Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: cloudflare}}
+	reconciler := &CloudflareTunnelBindingReconciler{ControllerClass: testControllerClass, Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: cloudflare}}
 	request := ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}
 
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
@@ -141,6 +143,160 @@ func TestBindingReconcileCreatesIdempotentTunnelAndHardenedConnectors(t *testing
 	}
 }
 
+func TestBindingReconcileIgnoresOtherControllerClassBeforeDeletionEffects(t *testing.T) {
+	scheme := bindingTestScheme(t)
+	objects, binding := validBindingObjects()
+	binding.Spec.Controller = testOtherControllerClass
+	binding.Finalizers = []string{bindingFinalizer}
+	binding.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+	binding.Status.TunnelID = testTunnelID
+	child := &appsv1.Deployment{}
+	child.Name = connectorResourceName(binding.UID)
+	child.Namespace = defaultSystemNamespace
+	child.Labels = managedLabels(binding)
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.ClusterCloudflareProvider{}).
+		WithObjects(append(objects, child)...).Build()
+	cloudflare := &fakeCloudflareClient{}
+	reconciler := &CloudflareTunnelBindingReconciler{ControllerClass: testControllerClass, Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: cloudflare}}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}); err != nil {
+		t.Fatalf("ignore foreign binding: %v", err)
+	}
+	actual := &kflaredv1alpha1.CloudflareTunnelBinding{}
+	if err := kubeClient.Get(context.Background(), client.ObjectKeyFromObject(binding), actual); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(actual.Finalizers, []string{bindingFinalizer}) || actual.Status.TunnelID != testTunnelID || len(actual.Status.Conditions) != 0 {
+		t.Fatalf("foreign binding mutated: finalizers=%v status=%#v", actual.Finalizers, actual.Status)
+	}
+	if cloudflare.validateCalls+cloudflare.createCalls+cloudflare.updateCalls+cloudflare.deleteCalls != 0 {
+		t.Fatalf("foreign binding caused Cloudflare calls: %#v", cloudflare)
+	}
+	actualChild := &appsv1.Deployment{}
+	if err := kubeClient.Get(context.Background(), client.ObjectKeyFromObject(child), actualChild); err != nil {
+		t.Fatalf("foreign binding deleted its child Deployment: %v", err)
+	}
+}
+
+func TestBindingProviderControllerClassMismatchOnlyUpdatesBindingStatus(t *testing.T) {
+	scheme := bindingTestScheme(t)
+	objects, binding := validBindingObjects()
+	binding.Finalizers = []string{bindingFinalizer}
+	binding.Status.TunnelID = testTunnelID
+	provider := bindingTestClusterProvider(t, objects)
+	provider.Spec.Controller = testOtherControllerClass
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.ClusterCloudflareProvider{}).
+		WithObjects(objects...).Build()
+	cloudflare := &fakeCloudflareClient{}
+	reconciler := &CloudflareTunnelBindingReconciler{ControllerClass: testControllerClass, Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: cloudflare}}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}); err != nil {
+		t.Fatalf("report provider class mismatch: %v", err)
+	}
+	actual := &kflaredv1alpha1.CloudflareTunnelBinding{}
+	if err := kubeClient.Get(context.Background(), client.ObjectKeyFromObject(binding), actual); err != nil {
+		t.Fatal(err)
+	}
+	accepted := apiMeta.FindStatusCondition(actual.Status.Conditions, kflaredv1alpha1.BindingConditionAccepted)
+	if accepted == nil || accepted.Status != metav1.ConditionFalse || accepted.Reason != "ProviderControllerClassMismatch" {
+		t.Fatalf("Accepted condition = %#v, want False/ProviderControllerClassMismatch", accepted)
+	}
+	if cloudflare.validateCalls+cloudflare.createCalls+cloudflare.updateCalls+cloudflare.deleteCalls != 0 {
+		t.Fatalf("class mismatch caused Cloudflare calls: %#v", cloudflare)
+	}
+}
+
+func TestBindingEventMapperQueuesOnlyOwnedControllerClass(t *testing.T) {
+	scheme := bindingTestScheme(t)
+	objects, binding := validBindingObjects()
+	otherClass := binding.DeepCopy()
+	otherClass.Name = "foreign"
+	otherClass.UID = types.UID("99999999-2222-3333-4444-555555555555")
+	otherClass.Spec.Controller = testOtherControllerClass
+	objects = append(objects, otherClass)
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
+	reconciler := &CloudflareTunnelBindingReconciler{ControllerClass: testControllerClass, Client: kubeClient}
+	changedService := &corev1.Service{}
+	changedService.Name = testGatewayName
+	changedService.Namespace = testTenantName
+	requests := reconciler.bindingsForObject(context.Background(), changedService)
+	if len(requests) != 1 || requests[0].Namespace != binding.Namespace || requests[0].Name != binding.Name {
+		t.Fatalf("event requests = %#v, want only %s/%s", requests, binding.Namespace, binding.Name)
+	}
+}
+
+func TestPrimaryWatchPredicatesFilterControllerClass(t *testing.T) {
+	providerPredicate := clusterProviderClassPredicate(testControllerClass)
+	matchingProvider := readyClusterProvider()
+	foreignProvider := matchingProvider.DeepCopy()
+	foreignProvider.Spec.Controller = testOtherControllerClass
+	if !providerPredicate.Create(event.CreateEvent{Object: matchingProvider}) || providerPredicate.Create(event.CreateEvent{Object: foreignProvider}) {
+		t.Fatal("provider primary watch predicate did not filter by controller class")
+	}
+
+	bindingPredicate := bindingClassPredicate(testControllerClass)
+	matchingBinding := &kflaredv1alpha1.CloudflareTunnelBinding{Spec: kflaredv1alpha1.CloudflareTunnelBindingSpec{Controller: testControllerClass}}
+	foreignBinding := matchingBinding.DeepCopy()
+	foreignBinding.Spec.Controller = testOtherControllerClass
+	if !bindingPredicate.Create(event.CreateEvent{Object: matchingBinding}) || bindingPredicate.Create(event.CreateEvent{Object: foreignBinding}) {
+		t.Fatal("binding primary watch predicate did not filter by controller class")
+	}
+}
+
+func TestBindingFinalizationPreservesChildOwnedByOtherBinding(t *testing.T) {
+	scheme := bindingTestScheme(t)
+	objects, binding := validBindingObjects()
+	binding.Finalizers = []string{bindingFinalizer}
+	binding.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+	name := connectorResourceName(binding.UID)
+	foreignDeployment := testDeployment(name, defaultSystemNamespace, map[string]string{ownerUIDLabel: "different-binding-uid"})
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(append(objects, foreignDeployment)...).Build()
+	reconciler := &CloudflareTunnelBindingReconciler{ControllerClass: testControllerClass, Client: kubeClient, Scheme: scheme}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}); err == nil || !strings.Contains(err.Error(), "not owned by this binding") {
+		t.Fatalf("Reconcile() error = %v, want ownership refusal", err)
+	}
+	actual := &appsv1.Deployment{}
+	if err := kubeClient.Get(context.Background(), types.NamespacedName{Namespace: defaultSystemNamespace, Name: name}, actual); err != nil {
+		t.Fatalf("foreign Deployment was deleted: %v", err)
+	}
+}
+
+func TestBindingFinalizationWithForeignProviderLeavesChildrenAndTunnelAlone(t *testing.T) {
+	scheme := bindingTestScheme(t)
+	objects, binding := validBindingObjects()
+	binding.Finalizers = []string{bindingFinalizer}
+	binding.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+	binding.Status.TunnelID = testTunnelID
+	provider := bindingTestClusterProvider(t, objects)
+	provider.Spec.Controller = testOtherControllerClass
+	child := testDeployment(connectorResourceName(binding.UID), defaultSystemNamespace, managedLabels(binding))
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(append(objects, child)...).Build()
+	cloudflare := &fakeCloudflareClient{}
+	reconciler := &CloudflareTunnelBindingReconciler{ControllerClass: testControllerClass, Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: cloudflare}}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}); err == nil || !strings.Contains(err.Error(), "belongs to controller class") {
+		t.Fatalf("Reconcile() error = %v, want provider class refusal", err)
+	}
+	actualChild := &appsv1.Deployment{}
+	if err := kubeClient.Get(context.Background(), client.ObjectKeyFromObject(child), actualChild); err != nil {
+		t.Fatalf("child Deployment was deleted before provider class check: %v", err)
+	}
+	actualBinding := &kflaredv1alpha1.CloudflareTunnelBinding{}
+	if err := kubeClient.Get(context.Background(), client.ObjectKeyFromObject(binding), actualBinding); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(actualBinding.Finalizers, bindingFinalizer) {
+		t.Fatalf("binding finalizer was removed: %v", actualBinding.Finalizers)
+	}
+	if cloudflare.validateCalls+cloudflare.createCalls+cloudflare.updateCalls+cloudflare.deleteCalls != 0 {
+		t.Fatalf("foreign provider caused Cloudflare calls: %#v", cloudflare)
+	}
+}
+
 func TestBindingDeprogramsTunnelWhenItLosesEligibility(t *testing.T) {
 	scheme := bindingTestScheme(t)
 	objects, binding := validBindingObjects()
@@ -159,7 +315,7 @@ func TestBindingDeprogramsTunnelWhenItLosesEligibility(t *testing.T) {
 		tunnel:        &cfclient.Tunnel{ID: testTunnelID, Name: planner.TunnelName(types.UID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"), binding), ConfigSource: cfclient.ConfigSourceCloudflare},
 		configuration: []cfclient.IngressRule{{Hostname: testApplicationHostname, Service: testOldOrigin}, {Service: testNotFoundOrigin}},
 	}
-	reconciler := &CloudflareTunnelBindingReconciler{Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: cloudflare}}
+	reconciler := &CloudflareTunnelBindingReconciler{ControllerClass: testControllerClass, Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: cloudflare}}
 	request := ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}
 
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
@@ -204,7 +360,7 @@ func TestBindingRejectsCurrentProviderFailure(t *testing.T) {
 				tunnel:        &cfclient.Tunnel{ID: binding.Status.TunnelID, Name: binding.Status.TunnelName, ConfigSource: cfclient.ConfigSourceCloudflare},
 				configuration: []cfclient.IngressRule{{Hostname: testApplicationHostname, Service: testOldOrigin}, {Service: testNotFoundOrigin}},
 			}
-			reconciler := &CloudflareTunnelBindingReconciler{Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: cloudflare}}
+			reconciler := &CloudflareTunnelBindingReconciler{ControllerClass: testControllerClass, Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: cloudflare}}
 			request := ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}
 
 			if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
@@ -267,7 +423,7 @@ func TestBindingPreservesWorkingTunnelWhileProviderCredentialsAreIndeterminate(t
 				tunnel:        &cfclient.Tunnel{ID: binding.Status.TunnelID, Name: binding.Status.TunnelName, ConfigSource: cfclient.ConfigSourceCloudflare},
 				configuration: slices.Clone(initialConfiguration),
 			}
-			reconciler := &CloudflareTunnelBindingReconciler{Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: cloudflare}}
+			reconciler := &CloudflareTunnelBindingReconciler{ControllerClass: testControllerClass, Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: cloudflare}}
 			request := ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}
 
 			result, err := reconciler.Reconcile(context.Background(), request)
@@ -403,10 +559,11 @@ func TestBindingReportsOperationalReconciliationFailures(t *testing.T) {
 				kubeClient = &failingGetClient{Client: baseClient, objectType: reflect.TypeOf(tt.objectFailure), key: tt.objectKey, err: failure}
 			}
 			reconciler := &CloudflareTunnelBindingReconciler{
-				Client:     kubeClient,
-				Scheme:     scheme,
-				RESTMapper: bindingTestRESTMapper(),
-				Cloudflare: fakeCloudflareFactory{client: cloudflare},
+				ControllerClass: testControllerClass,
+				Client:          kubeClient,
+				Scheme:          scheme,
+				RESTMapper:      bindingTestRESTMapper(),
+				Cloudflare:      fakeCloudflareFactory{client: cloudflare},
 			}
 			request := ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}
 
@@ -438,7 +595,7 @@ func TestBindingOperationalFailureReturnsCauseAndSinglePatchFailure(t *testing.T
 		Client:   fake.NewClientBuilder().WithScheme(scheme).Build(),
 		patchErr: patchFailure,
 	}
-	reconciler := &CloudflareTunnelBindingReconciler{Client: kubeClient, Scheme: scheme}
+	reconciler := &CloudflareTunnelBindingReconciler{ControllerClass: testControllerClass, Client: kubeClient, Scheme: scheme}
 	binding := &kflaredv1alpha1.CloudflareTunnelBinding{Name: "public", Namespace: testTenantName, Generation: 1}
 	cause := errors.New("tunnel operation failed")
 
@@ -471,10 +628,11 @@ func TestBindingFinalizationHonorsDeletionPolicy(t *testing.T) {
 				WithObjects(objects...).Build()
 			cloudflare := &fakeCloudflareClient{tunnel: &cfclient.Tunnel{ID: binding.Status.TunnelID, Name: testBindingTunnelName}}
 			reconciler := &CloudflareTunnelBindingReconciler{
-				Client:     kubeClient,
-				Scheme:     scheme,
-				RESTMapper: bindingTestRESTMapper(),
-				Cloudflare: fakeCloudflareFactory{client: cloudflare},
+				ControllerClass: testControllerClass,
+				Client:          kubeClient,
+				Scheme:          scheme,
+				RESTMapper:      bindingTestRESTMapper(),
+				Cloudflare:      fakeCloudflareFactory{client: cloudflare},
 			}
 			request := ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}
 
@@ -505,10 +663,11 @@ func TestBindingFinalizationRetriesRemoteTunnelDeletion(t *testing.T) {
 		tunnel:    &cfclient.Tunnel{ID: binding.Status.TunnelID, Name: testBindingTunnelName},
 	}
 	reconciler := &CloudflareTunnelBindingReconciler{
-		Client:     kubeClient,
-		Scheme:     scheme,
-		RESTMapper: bindingTestRESTMapper(),
-		Cloudflare: fakeCloudflareFactory{client: cloudflare},
+		ControllerClass: testControllerClass,
+		Client:          kubeClient,
+		Scheme:          scheme,
+		RESTMapper:      bindingTestRESTMapper(),
+		Cloudflare:      fakeCloudflareFactory{client: cloudflare},
 	}
 	request := ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}
 
@@ -726,10 +885,19 @@ func finalizingBindingObjects(deletionPolicy kflaredv1alpha1.DeletionPolicy) ([]
 	endpoint.SetKind(dnsEndpointKind)
 	endpoint.SetName(resourceName)
 	endpoint.SetNamespace(binding.Namespace)
+	endpoint.SetLabels(managedLabels(binding))
+	pdb := &policyv1.PodDisruptionBudget{}
+	pdb.Name = resourceName
+	pdb.Namespace = defaultSystemNamespace
+	pdb.Labels = managedLabels(binding)
+	secret := &corev1.Secret{}
+	secret.Name = resourceName
+	secret.Namespace = defaultSystemNamespace
+	secret.Labels = managedLabels(binding)
 	return append(objects,
-		&appsv1.Deployment{Name: resourceName, Namespace: defaultSystemNamespace},
-		&policyv1.PodDisruptionBudget{Name: resourceName, Namespace: defaultSystemNamespace},
-		&corev1.Secret{Name: resourceName, Namespace: defaultSystemNamespace},
+		testDeployment(resourceName, defaultSystemNamespace, managedLabels(binding)),
+		pdb,
+		secret,
 		endpoint,
 	), binding
 }
@@ -787,6 +955,7 @@ func validBindingObjects() ([]client.Object, *kflaredv1alpha1.CloudflareTunnelBi
 	binding := &kflaredv1alpha1.CloudflareTunnelBinding{
 		Name: "public", Namespace: testTenantName, UID: types.UID("11111111-2222-3333-4444-555555555555"), Generation: 1, CreationTimestamp: metav1.NewTime(time.Unix(100, 0)),
 		Spec: kflaredv1alpha1.CloudflareTunnelBindingSpec{
+			Controller:        testControllerClass,
 			ProviderRef:       kflaredv1alpha1.LocalReference{Name: testDefaultName},
 			GatewayRef:        kflaredv1alpha1.GatewayReference{Name: testGatewayName, SectionName: testHTTPSectionName},
 			GatewayServiceRef: kflaredv1alpha1.GatewayServiceReference{Name: testGatewayName, Port: intstr.FromString("web")},

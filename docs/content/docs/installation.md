@@ -24,10 +24,38 @@ The supported chart is rooted at `charts/`:
 ```sh
 helm upgrade --install kflared ./charts \
   --namespace kflared \
+  --set controllerClass=kflared \
   --create-namespace
 ```
 
+`controllerClass` is required. Choose a stable value for this installation and use it as `spec.controller` on every provider and binding assigned to it. There is no default class.
+
 KFlared CRDs live in Helm's special `crds/` directory. Helm installs them before templates and deliberately does not upgrade or delete them. Use `--skip-crds` only when a cluster administrator manages the CRDs separately.
+
+### Upgrade from a release without controller classes
+
+Do not roll out the new manager before the stored resources have a class: it will deliberately ignore them. Keep the old manager running and perform these phases in order:
+
+1. Apply both new CRDs directly from `config/crd/bases/` (or synchronize an equivalent CRD-only GitOps source). A normal `helm upgrade` does not update files from `charts/crds/`.
+2. Add the chosen class to every stored `ClusterCloudflareProvider` and `CloudflareTunnelBinding`, either by synchronizing their updated GitOps manifests or by patching each object explicitly:
+
+   ```sh
+   kubectl patch clustercloudflareprovider <provider> \
+     --type=merge -p '{"spec":{"controller":"kflared"}}'
+   kubectl patch cloudflaretunnelbinding -n <namespace> <binding> \
+     --type=merge -p '{"spec":{"controller":"kflared"}}'
+   ```
+
+3. Verify that every resource assigned to this installation reports the intended value:
+
+   ```sh
+   kubectl get clustercloudflareproviders -o custom-columns=NAME:.metadata.name,CONTROLLER:.spec.controller
+   kubectl get cloudflaretunnelbindings -A -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,CONTROLLER:.spec.controller
+   ```
+
+4. Upgrade the chart with the matching explicit value, for example `--set controllerClass=kflared`.
+
+The initial backfill is allowed because the old field value is absent. After it is set, the CRD rejects class changes; moving a resource to another class requires recreation. In GitOps, make the CRD synchronization, custom-resource backfill, and controller rollout separate ordered syncs or waves so pruning by the old schema and early manager startup cannot race the migration.
 
 Set `namespace.create=true` when a GitOps or rendered-manifest workflow should create the release namespace from the chart. Optional `namespace.labels` and `namespace.annotations` customize it. Direct Helm installs still need `--create-namespace` when the target does not exist because Helm initializes the release namespace before applying chart templates.
 
