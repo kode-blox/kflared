@@ -24,11 +24,12 @@ The supported chart is rooted at `charts/`:
 ```sh
 helm upgrade --install kflared ./charts \
   --namespace kflared \
-  --set controllerClass=kflared \
   --create-namespace
 ```
 
-`controllerClass` is required. Choose a stable value for this installation and use it as `spec.controller` on every provider and binding assigned to it. There is no default class.
+`controllerClass` defaults to `kflared`. Use that value as `spec.controller` on every provider and binding assigned to the installation. Override it with a stable, distinct value for each additional KFlared installation in the same cluster.
+
+> **Warning:** Never run two KFlared installations with the same controller class. They would select the same resources even when installed in different namespaces. A second installation must set a distinct value, for example `--set controllerClass=kflared-secondary`, and its providers and bindings must use that same value.
 
 KFlared CRDs live in Helm's special `crds/` directory. Helm installs them before templates and deliberately does not upgrade or delete them. Use `--skip-crds` only when a cluster administrator manages the CRDs separately.
 
@@ -53,7 +54,7 @@ Do not roll out the new manager before the stored resources have a class: it wil
    kubectl get cloudflaretunnelbindings -A -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,CONTROLLER:.spec.controller
    ```
 
-4. Upgrade the chart with the matching explicit value, for example `--set controllerClass=kflared`.
+4. Upgrade the chart. The default class is `kflared`; if the resources were backfilled with another class, pass the matching value with `--set controllerClass=<class>`.
 
 The initial backfill is allowed because the old field value is absent. After it is set, the CRD rejects class changes; moving a resource to another class requires recreation. In GitOps, make the CRD synchronization, custom-resource backfill, and controller rollout separate ordered syncs or waves so pruning by the old schema and early manager startup cannot race the migration.
 

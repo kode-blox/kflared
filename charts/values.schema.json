@@ -45,7 +45,8 @@
     "controllerClass": {
       "type": "string",
       "minLength": 1,
-      "description": "Required controller ownership class. Must match spec.controller on managed resources."
+      "default": "kflared",
+      "description": "Controller ownership class. Must match spec.controller on managed resources."
     },
     "namespace": {
       "type": "object",

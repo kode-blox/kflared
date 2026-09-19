@@ -11,11 +11,12 @@ KFlared CRDs are plain YAML in Helm's special `crds/` directory. Helm installs t
 ```sh
 helm upgrade --install kflared ./charts \
   --namespace kflared \
-  --set controllerClass=kflared \
   --create-namespace
 ```
 
-`controllerClass` is required and has no default. Choose a stable class for this KFlared installation and set the same value in `spec.controller` on each provider and binding it owns. Different KFlared installations in one cluster must use distinct classes.
+`controllerClass` defaults to `kflared`. Use that value in `spec.controller` on each provider and binding owned by the installation. Override it with a stable, distinct value for each additional KFlared installation in the same cluster.
+
+> **Warning:** Never run two KFlared installations with the same controller class. A second installation must set a distinct value, for example `--set controllerClass=kflared-secondary`, and its providers and bindings must use that same value.
 
 When upgrading resources created before controller classes existed, do not rely on `helm upgrade` to update the CRDs. Follow the ordered CRD sync, resource backfill, verification, and controller rollout procedure in the [main installation documentation](../docs/content/docs/installation.md#upgrade-from-a-release-without-controller-classes).
 

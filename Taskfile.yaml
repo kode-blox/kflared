@@ -230,8 +230,21 @@ tasks:
   helm-lint:
     desc: Lint the supported Helm chart
     deps: [require-pwsh]
+    env:
+      HELM: '{{.HELM}}'
     cmds:
-      - '"{{.HELM}}" lint ./charts --strict --set controllerClass=kflared'
+      - cmd: |
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '
+            & $env:HELM lint ./charts --strict
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+            & $env:HELM lint ./charts --strict --set-string "controllerClass=" *> $null
+            if ($LASTEXITCODE -eq 0) {
+              Write-Error "Helm lint accepted an empty controllerClass."
+              exit 1
+            }
+            exit 0
+          '
 
   helm-template:
     desc: Render the supported Helm chart with default and optional resources
@@ -243,7 +256,6 @@ tasks:
       - cmd: |
           pwsh -NoLogo -NoProfile -NonInteractive -Command '
             & $env:HELM template kflared ./charts --namespace kflared `
-              --set controllerClass=kflared `
               --kube-version $env:HELM_KUBE_VERSION | Out-Null
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
