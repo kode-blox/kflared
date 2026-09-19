@@ -51,7 +51,7 @@ type ClusterCloudflareProviderReconciler struct {
 	SystemNamespace string
 }
 
-// +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=clustercloudflareproviders,verbs=get;list;watch
+// +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=clustercloudflareproviders,verbs=get;list;watch;update
 // +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=clustercloudflareproviders/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=clustercloudflareproviders/finalizers,verbs=update
 // +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=cloudflaretunnelbindings,verbs=get;list;watch

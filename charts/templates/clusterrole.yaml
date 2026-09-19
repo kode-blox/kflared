@@ -14,7 +14,7 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: ["kflared.kodeblox.com"]
     resources: ["clustercloudflareproviders", "cloudflaretunnelbindings"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "update", "watch"]
   - apiGroups: ["kflared.kodeblox.com"]
     resources: ["clustercloudflareproviders/finalizers", "cloudflaretunnelbindings/finalizers"]
     verbs: ["update"]

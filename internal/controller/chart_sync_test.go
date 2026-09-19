@@ -72,6 +72,26 @@ func TestHelmManagerRBACMatchesGeneratedManifest(t *testing.T) {
 	}
 }
 
+func TestManagerRBACAllowsMainResourceUpdatesForFinalizers(t *testing.T) {
+	generatedPath := filepath.Join("..", "..", "config", "rbac", "role.yaml")
+	rules := readClusterRoleRules(t, generatedPath, false)
+
+	for _, resource := range []string{"clustercloudflareproviders", "cloudflaretunnelbindings"} {
+		if !allowsResourceVerb(rules, "kflared.kodeblox.com", resource, "update") {
+			t.Errorf("%s must allow update on %s so the controller can manage finalizers", generatedPath, resource)
+		}
+	}
+}
+
+func allowsResourceVerb(rules []rbacv1.PolicyRule, apiGroup, resource, verb string) bool {
+	for _, rule := range rules {
+		if slices.Contains(rule.APIGroups, apiGroup) && slices.Contains(rule.Resources, resource) && slices.Contains(rule.Verbs, verb) {
+			return true
+		}
+	}
+	return false
+}
+
 func readClusterRoleRules(t *testing.T, path string, helmTemplate bool) []rbacv1.PolicyRule {
 	t.Helper()
 
