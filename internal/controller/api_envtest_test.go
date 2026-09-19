@@ -30,6 +30,7 @@ import (
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
@@ -101,26 +102,34 @@ func TestControllerClassBackfillAfterCRDUpgrade(t *testing.T) {
 	upgradeCRD(t, ctx, crdClient, providerCRD)
 	upgradeCRD(t, ctx, crdClient, bindingCRD)
 
+	backfillControllerClass(t, ctx, kubeClient, legacyProvider, testControllerClass,
+		func(object client.Object, value string) {
+			object.(*kflaredv1alpha1.ClusterCloudflareProvider).Spec.Controller = value
+		},
+		func(object client.Object) string {
+			return object.(*kflaredv1alpha1.ClusterCloudflareProvider).Spec.Controller
+		},
+	)
 	storedProvider := &kflaredv1alpha1.ClusterCloudflareProvider{}
 	if err := kubeClient.Get(ctx, client.ObjectKeyFromObject(legacyProvider), storedProvider); err != nil {
 		t.Fatal(err)
-	}
-	storedProvider.Spec.Controller = testControllerClass
-	if err := kubeClient.Update(ctx, storedProvider); err != nil {
-		t.Fatalf("backfill provider controller after CRD upgrade: %v", err)
 	}
 	storedProvider.Spec.Controller = testOtherControllerClass
 	if err := kubeClient.Update(ctx, storedProvider); err == nil {
 		t.Fatal("provider controller mutation after backfill unexpectedly passed CRD validation")
 	}
 
+	backfillControllerClass(t, ctx, kubeClient, legacyBinding, testControllerClass,
+		func(object client.Object, value string) {
+			object.(*kflaredv1alpha1.CloudflareTunnelBinding).Spec.Controller = value
+		},
+		func(object client.Object) string {
+			return object.(*kflaredv1alpha1.CloudflareTunnelBinding).Spec.Controller
+		},
+	)
 	storedBinding := &kflaredv1alpha1.CloudflareTunnelBinding{}
 	if err := kubeClient.Get(ctx, client.ObjectKeyFromObject(legacyBinding), storedBinding); err != nil {
 		t.Fatal(err)
-	}
-	storedBinding.Spec.Controller = testControllerClass
-	if err := kubeClient.Update(ctx, storedBinding); err != nil {
-		t.Fatalf("backfill binding controller after CRD upgrade: %v", err)
 	}
 	storedBinding.Spec.Controller = testOtherControllerClass
 	if err := kubeClient.Update(ctx, storedBinding); err == nil {
@@ -196,18 +205,52 @@ func upgradeCRD(t *testing.T, ctx context.Context, crdClient *apiextensionsclien
 		t.Fatal(err)
 	}
 	stored.Spec = current.Spec
-	updated, err := crdClient.ApiextensionsV1().CustomResourceDefinitions().Update(ctx, stored, metav1.UpdateOptions{})
-	if err != nil {
+	if _, err := crdClient.ApiextensionsV1().CustomResourceDefinitions().Update(ctx, stored, metav1.UpdateOptions{}); err != nil {
 		t.Fatalf("upgrade CRD %s: %v", current.Name, err)
 	}
-	if err := wait.PollUntilContextTimeout(ctx, 10*time.Millisecond, 10*time.Second, true, func(ctx context.Context) (bool, error) {
-		observed, err := crdClient.ApiextensionsV1().CustomResourceDefinitions().Get(ctx, current.Name, metav1.GetOptions{})
-		if err != nil {
-			return false, err
+}
+
+func backfillControllerClass(
+	t *testing.T,
+	ctx context.Context,
+	kubeClient client.Client,
+	object client.Object,
+	expected string,
+	setController func(client.Object, string),
+	getController func(client.Object) string,
+) {
+	t.Helper()
+	key := client.ObjectKeyFromObject(object)
+	var lastErr error
+	err := wait.PollUntilContextTimeout(ctx, 10*time.Millisecond, 10*time.Second, true, func(ctx context.Context) (bool, error) {
+		candidate := object.DeepCopyObject().(client.Object)
+		if err := kubeClient.Get(ctx, key, candidate); err != nil {
+			return false, fmt.Errorf("get legacy object: %w", err)
 		}
-		return observed.Status.ObservedGeneration >= updated.Generation, nil
-	}); err != nil {
-		t.Fatalf("wait for upgraded CRD %s: %v", current.Name, err)
+		setController(candidate, expected)
+		if err := kubeClient.Update(ctx, candidate); err != nil {
+			lastErr = fmt.Errorf("update controller class: %w", err)
+			if apierrors.IsConflict(err) {
+				return false, nil
+			}
+			return false, lastErr
+		}
+
+		stored := object.DeepCopyObject().(client.Object)
+		if err := kubeClient.Get(ctx, key, stored); err != nil {
+			return false, fmt.Errorf("verify updated object: %w", err)
+		}
+		if actual := getController(stored); actual != expected {
+			lastErr = fmt.Errorf("stored controller class is %q, want %q", actual, expected)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		if lastErr != nil {
+			t.Fatalf("backfill controller class for %s: %v (poll failed: %v)", key, lastErr, err)
+		}
+		t.Fatalf("backfill controller class for %s: %v", key, err)
 	}
 }
 
