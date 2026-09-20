@@ -13,8 +13,9 @@ spec:
   gatewayRef:
     name: traefik
     sectionName: http
-  gatewayServiceRef:
-    name: traefik
-    port: web
+  originServiceRef:
+    name: traefik-cloudflare
+    namespace: traefik
+    port: cloudflare
   connectorReplicas: 2
   deletionPolicy: Delete

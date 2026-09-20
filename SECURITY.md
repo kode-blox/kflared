@@ -10,7 +10,9 @@ Connector tokens are written to an operator-generated Secret, mounted read-only,
 
 ## Tenancy
 
-Providers are cluster-scoped administrator resources. Every provider requires an explicit DNS suffix allow-list and a namespace label selector. `{}` intentionally allows every namespace. Bindings, Gateways, routes, and origin Services are same-namespace in the MVP.
+Providers are cluster-scoped administrator resources. Every provider requires an explicit DNS suffix allow-list and a namespace label selector. `{}` intentionally allows every namespace. Bindings, Gateways, and eligible HTTPRoutes remain in the binding's application namespace. An origin Service can be in another namespace only when a matching Gateway API `ReferenceGrant` exists there. KFlared enforces this custom reference during reconciliation; Kubernetes does not enforce it automatically. A grant does not provide packet-level networking access.
+
+KFlared checks authorization before reading the cross-namespace Service. If authorization is absent or revoked, it fails closed; revocation deprograms the tunnel ingress and removes managed DNS. The Service must be a normal internal `ClusterIP` Service. Because a grant cannot restrict an individual port, a dedicated single-port origin Service is recommended.
 
 One binding owns one Gateway and every published hostname. Conflicting later bindings do not mutate Kubernetes or Cloudflare resources. Do not grant tenant users permission to edit providers or the system namespace.
 
@@ -24,7 +26,7 @@ Generated connector Pods:
 - drop every Linux capability and disallow privilege escalation;
 - mount only the tunnel token Secret.
 
-The project does not install a NetworkPolicy because Cloudflare connector endpoints and cluster DNS requirements can evolve. Administrators may supply an egress-only policy after validating current Cloudflare requirements. The operator cannot make an existing LoadBalancer or NodePort Traefik Service private and emits a warning when one is selected.
+The project does not install a NetworkPolicy because Cloudflare connector endpoints and cluster DNS requirements can evolve. Administrators may supply an egress-only policy after validating current Cloudflare requirements. KFlared rejects origin Services of type `LoadBalancer` or `NodePort` rather than treating them as private.
 
 ## Security policy
 

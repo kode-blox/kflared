@@ -51,11 +51,16 @@ type GatewayReference struct {
 	SectionName string `json:"sectionName"`
 }
 
-// GatewayServiceReference identifies the internal Traefik Service and port.
-type GatewayServiceReference struct {
+// OriginServiceReference identifies the internal Traefik Service and port.
+type OriginServiceReference struct {
 	// +kubebuilder:validation:MinLength=1
-	Name string             `json:"name"`
-	Port intstr.IntOrString `json:"port"`
+	Name string `json:"name"`
+	// namespace defaults to the CloudflareTunnelBinding namespace when omitted.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Namespace string             `json:"namespace,omitempty"`
+	Port      intstr.IntOrString `json:"port"`
 }
 
 // CloudflareTunnelBindingSpec defines the desired tunnel integration.
@@ -68,8 +73,8 @@ type CloudflareTunnelBindingSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="providerRef is immutable"
 	ProviderRef LocalReference `json:"providerRef"`
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="gatewayRef is immutable"
-	GatewayRef        GatewayReference        `json:"gatewayRef"`
-	GatewayServiceRef GatewayServiceReference `json:"gatewayServiceRef"`
+	GatewayRef       GatewayReference       `json:"gatewayRef"`
+	OriginServiceRef OriginServiceReference `json:"originServiceRef"`
 
 	// connectorReplicas controls the number of official cloudflared connectors.
 	// +kubebuilder:default=2

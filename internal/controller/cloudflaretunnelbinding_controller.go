@@ -192,7 +192,7 @@ func (r *CloudflareTunnelBindingReconciler) validateAndPlan(ctx context.Context,
 	if result != nil || err != nil {
 		return nil, nil, "", result, err
 	}
-	origin, result, err := r.validateGatewayService(ctx, binding)
+	origin, result, err := r.validateOriginService(ctx, binding)
 	if result != nil || err != nil {
 		return nil, nil, "", result, err
 	}
@@ -261,7 +261,7 @@ func (r *CloudflareTunnelBindingReconciler) validateClusterProvider(ctx context.
 	return provider, nil, nil
 }
 
-func (r *CloudflareTunnelBindingReconciler) validateGatewayService(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding) (string, *ctrl.Result, error) {
+func (r *CloudflareTunnelBindingReconciler) validateOriginService(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding) (string, *ctrl.Result, error) {
 	gateway := &gatewayv1.Gateway{}
 	if err := r.Get(ctx, types.NamespacedName{Namespace: binding.Namespace, Name: binding.Spec.GatewayRef.Name}, gateway); err != nil {
 		_, _, _, result, rejectErr := r.rejected(ctx, binding, "GatewayNotFound", "The referenced Gateway was not found", client.IgnoreNotFound(err))
@@ -285,24 +285,56 @@ func (r *CloudflareTunnelBindingReconciler) validateGatewayService(ctx context.C
 		return "", result, rejectErr
 	}
 
+	originNamespace := effectiveOriginServiceNamespace(binding)
+	if originNamespace != binding.Namespace {
+		permitted, err := r.originReferencePermitted(ctx, binding, originNamespace)
+		if err != nil {
+			return "", nil, err
+		}
+		if !permitted {
+			message := fmt.Sprintf("No ReferenceGrant in namespace %q permits CloudflareTunnelBinding objects from namespace %q to reference core Service %q", originNamespace, binding.Namespace, binding.Spec.OriginServiceRef.Name)
+			_, _, _, result, rejectErr := r.rejected(ctx, binding, "RefNotPermitted", message, nil)
+			return "", result, rejectErr
+		}
+	}
+
 	service := &corev1.Service{}
-	if err := r.Get(ctx, types.NamespacedName{Namespace: binding.Namespace, Name: binding.Spec.GatewayServiceRef.Name}, service); err != nil {
-		_, _, _, result, rejectErr := r.rejected(ctx, binding, "ServiceNotFound", "The referenced Gateway Service was not found", client.IgnoreNotFound(err))
+	serviceKey := types.NamespacedName{Namespace: originNamespace, Name: binding.Spec.OriginServiceRef.Name}
+	if err := r.Get(ctx, serviceKey, service); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return "", nil, err
+		}
+		message := fmt.Sprintf("The referenced origin Service %s/%s was not found", serviceKey.Namespace, serviceKey.Name)
+		_, _, _, result, rejectErr := r.rejected(ctx, binding, "ServiceNotFound", message, nil)
+		return "", result, rejectErr
+	}
+	if service.Spec.Type != "" && service.Spec.Type != corev1.ServiceTypeClusterIP {
+		_, _, _, result, rejectErr := r.rejected(ctx, binding, "InvalidService", fmt.Sprintf("The origin Service must use type ClusterIP; %s is not supported", service.Spec.Type), nil)
 		return "", result, rejectErr
 	}
 	if service.Spec.ClusterIP == "" || service.Spec.ClusterIP == corev1.ClusterIPNone {
-		_, _, _, result, rejectErr := r.rejected(ctx, binding, "HeadlessServiceUnsupported", "The Gateway Service must have a ClusterIP", nil)
+		_, _, _, result, rejectErr := r.rejected(ctx, binding, "InvalidService", "The origin Service must be a non-headless ClusterIP Service", nil)
 		return "", result, rejectErr
 	}
-	if service.Spec.Type == corev1.ServiceTypeLoadBalancer || service.Spec.Type == corev1.ServiceTypeNodePort {
-		r.event(binding, corev1.EventTypeWarning, "PublicServiceExposure", "The selected Traefik Service may already expose a public endpoint; ClusterIP is recommended")
-	}
-	port, err := resolveServicePort(service, binding.Spec.GatewayServiceRef.Port)
+	port, err := resolveServicePort(service, binding.Spec.OriginServiceRef.Port)
 	if err != nil {
-		_, _, _, result, rejectErr := r.rejected(ctx, binding, "ServicePortInvalid", err.Error(), nil)
+		_, _, _, result, rejectErr := r.rejected(ctx, binding, "ServicePortNotFound", err.Error(), nil)
 		return "", result, rejectErr
 	}
 	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", service.Name, service.Namespace, port), nil, nil
+}
+
+func (r *CloudflareTunnelBindingReconciler) originReferencePermitted(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding, originNamespace string) (bool, error) {
+	grants := &gatewayv1.ReferenceGrantList{}
+	if err := r.List(ctx, grants, client.InNamespace(originNamespace)); err != nil {
+		return false, fmt.Errorf("list ReferenceGrants in origin Service namespace: %w", err)
+	}
+	for i := range grants.Items {
+		if referenceGrantPermitsOrigin(&grants.Items[i], binding) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (r *CloudflareTunnelBindingReconciler) acceptedRouteHostnames(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding) ([]string, error) {
@@ -722,6 +754,7 @@ func (r *CloudflareTunnelBindingReconciler) SetupWithManager(mgr ctrl.Manager) e
 		Watches(&gatewayv1.GatewayClass{}, handler.EnqueueRequestsFromMapFunc(r.bindingsForObject)).
 		Watches(&gatewayv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(r.bindingsForObject)).
 		Watches(&gatewayv1.HTTPRoute{}, handler.EnqueueRequestsFromMapFunc(r.bindingsForObject)).
+		Watches(&gatewayv1.ReferenceGrant{}, handler.EnqueueRequestsFromMapFunc(r.bindingsForObject)).
 		Watches(&corev1.Service{}, handler.EnqueueRequestsFromMapFunc(r.bindingsForObject)).
 		Watches(&corev1.Namespace{}, handler.EnqueueRequestsFromMapFunc(r.bindingsForObject)).
 		Named("cloudflaretunnelbinding").
@@ -749,8 +782,11 @@ func (r *CloudflareTunnelBindingReconciler) bindingsForObject(ctx context.Contex
 			matches = binding.Namespace == changed.Namespace && binding.Spec.GatewayRef.Name == changed.Name
 		case *gatewayv1.HTTPRoute:
 			matches = binding.Namespace == changed.Namespace && routeTargetsBinding(changed, binding)
+		case *gatewayv1.ReferenceGrant:
+			originNamespace := effectiveOriginServiceNamespace(binding)
+			matches = originNamespace != binding.Namespace && originNamespace == changed.Namespace
 		case *corev1.Service:
-			matches = binding.Namespace == changed.Namespace && binding.Spec.GatewayServiceRef.Name == changed.Name
+			matches = effectiveOriginServiceNamespace(binding) == changed.Namespace && binding.Spec.OriginServiceRef.Name == changed.Name
 		case *corev1.Namespace:
 			matches = binding.Namespace == changed.Name
 		}
@@ -790,7 +826,38 @@ func resolveServicePort(service *corev1.Service, requested intstr.IntOrString) (
 			return port.Port, nil
 		}
 	}
-	return 0, fmt.Errorf("gateway Service port %q was not found", requested.String())
+	return 0, fmt.Errorf("origin Service port %q was not found", requested.String())
+}
+
+func effectiveOriginServiceNamespace(binding *kflaredv1alpha1.CloudflareTunnelBinding) string {
+	if binding.Spec.OriginServiceRef.Namespace != "" {
+		return binding.Spec.OriginServiceRef.Namespace
+	}
+	return binding.Namespace
+}
+
+func referenceGrantPermitsOrigin(grant *gatewayv1.ReferenceGrant, binding *kflaredv1alpha1.CloudflareTunnelBinding) bool {
+	fromAllowed := false
+	for _, from := range grant.Spec.From {
+		if from.Group == gatewayv1.Group(kflaredv1alpha1.GroupVersion.Group) &&
+			from.Kind == gatewayv1.Kind("CloudflareTunnelBinding") &&
+			from.Namespace == gatewayv1.Namespace(binding.Namespace) {
+			fromAllowed = true
+			break
+		}
+	}
+	if !fromAllowed {
+		return false
+	}
+	for _, to := range grant.Spec.To {
+		if to.Group != gatewayv1.Group("") || to.Kind != gatewayv1.Kind("Service") {
+			continue
+		}
+		if to.Name == nil || string(*to.Name) == binding.Spec.OriginServiceRef.Name {
+			return true
+		}
+	}
+	return false
 }
 
 func routeTargetsBinding(route *gatewayv1.HTTPRoute, binding *kflaredv1alpha1.CloudflareTunnelBinding) bool {

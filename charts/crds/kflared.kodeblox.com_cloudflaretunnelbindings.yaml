@@ -94,12 +94,18 @@ spec:
                 x-kubernetes-validations:
                 - message: gatewayRef is immutable
                   rule: self == oldSelf
-              gatewayServiceRef:
-                description: GatewayServiceReference identifies the internal Traefik
+              originServiceRef:
+                description: OriginServiceReference identifies the internal Traefik
                   Service and port.
                 properties:
                   name:
                     minLength: 1
+                    type: string
+                  namespace:
+                    description: namespace defaults to the CloudflareTunnelBinding
+                      namespace when omitted.
+                    maxLength: 63
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                     type: string
                   port:
                     anyOf:
@@ -125,7 +131,7 @@ spec:
             required:
             - controller
             - gatewayRef
-            - gatewayServiceRef
+            - originServiceRef
             - providerRef
             type: object
           status:

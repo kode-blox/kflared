@@ -1,0 +1,14 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: ReferenceGrant
+metadata:
+  name: allow-my-app-kflared-origin
+  namespace: traefik
+spec:
+  from:
+  - group: kflared.kodeblox.com
+    kind: CloudflareTunnelBinding
+    namespace: my-app
+  to:
+  - group: ""
+    kind: Service
+    name: traefik-cloudflare

@@ -227,6 +227,257 @@ func TestBindingEventMapperQueuesOnlyOwnedControllerClass(t *testing.T) {
 	}
 }
 
+func TestOriginReferenceGrantMatching(t *testing.T) {
+	binding := &kflaredv1alpha1.CloudflareTunnelBinding{
+		Namespace: testTenantName,
+		Spec: kflaredv1alpha1.CloudflareTunnelBindingSpec{
+			OriginServiceRef: kflaredv1alpha1.OriginServiceReference{Name: testGatewayName},
+		},
+	}
+	serviceName := gatewayv1.ObjectName(testGatewayName)
+	otherServiceName := gatewayv1.ObjectName("other")
+	validFrom := gatewayv1.ReferenceGrantFrom{
+		Group:     gatewayv1.Group(kflaredv1alpha1.GroupVersion.Group),
+		Kind:      gatewayv1.Kind("CloudflareTunnelBinding"),
+		Namespace: gatewayv1.Namespace(testTenantName),
+	}
+	validTo := gatewayv1.ReferenceGrantTo{Group: gatewayv1.Group(""), Kind: gatewayv1.Kind("Service"), Name: &serviceName}
+	tests := []struct {
+		name  string
+		grant gatewayv1.ReferenceGrant
+		want  bool
+	}{
+		{name: "exact service", grant: gatewayv1.ReferenceGrant{Spec: gatewayv1.ReferenceGrantSpec{From: []gatewayv1.ReferenceGrantFrom{validFrom}, To: []gatewayv1.ReferenceGrantTo{validTo}}}, want: true},
+		{name: "all services when name omitted", grant: gatewayv1.ReferenceGrant{Spec: gatewayv1.ReferenceGrantSpec{From: []gatewayv1.ReferenceGrantFrom{validFrom}, To: []gatewayv1.ReferenceGrantTo{{Group: gatewayv1.Group(""), Kind: gatewayv1.Kind("Service")}}}}, want: true},
+		{name: "wrong source namespace", grant: gatewayv1.ReferenceGrant{Spec: gatewayv1.ReferenceGrantSpec{From: []gatewayv1.ReferenceGrantFrom{{Group: validFrom.Group, Kind: validFrom.Kind, Namespace: gatewayv1.Namespace("other")}}, To: []gatewayv1.ReferenceGrantTo{validTo}}}},
+		{name: "wrong source group", grant: gatewayv1.ReferenceGrant{Spec: gatewayv1.ReferenceGrantSpec{From: []gatewayv1.ReferenceGrantFrom{{Group: gatewayv1.Group("other.example.com"), Kind: validFrom.Kind, Namespace: validFrom.Namespace}}, To: []gatewayv1.ReferenceGrantTo{validTo}}}},
+		{name: "wrong source kind", grant: gatewayv1.ReferenceGrant{Spec: gatewayv1.ReferenceGrantSpec{From: []gatewayv1.ReferenceGrantFrom{{Group: validFrom.Group, Kind: gatewayv1.Kind("HTTPRoute"), Namespace: validFrom.Namespace}}, To: []gatewayv1.ReferenceGrantTo{validTo}}}},
+		{name: "wrong target group", grant: gatewayv1.ReferenceGrant{Spec: gatewayv1.ReferenceGrantSpec{From: []gatewayv1.ReferenceGrantFrom{validFrom}, To: []gatewayv1.ReferenceGrantTo{{Group: gatewayv1.Group("apps"), Kind: gatewayv1.Kind("Service"), Name: &serviceName}}}}},
+		{name: "wrong target kind", grant: gatewayv1.ReferenceGrant{Spec: gatewayv1.ReferenceGrantSpec{From: []gatewayv1.ReferenceGrantFrom{validFrom}, To: []gatewayv1.ReferenceGrantTo{{Group: gatewayv1.Group(""), Kind: gatewayv1.Kind("Secret"), Name: &serviceName}}}}},
+		{name: "another service", grant: gatewayv1.ReferenceGrant{Spec: gatewayv1.ReferenceGrantSpec{From: []gatewayv1.ReferenceGrantFrom{validFrom}, To: []gatewayv1.ReferenceGrantTo{{Group: gatewayv1.Group(""), Kind: gatewayv1.Kind("Service"), Name: &otherServiceName}}}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := referenceGrantPermitsOrigin(&tt.grant, binding); got != tt.want {
+				t.Fatalf("referenceGrantPermitsOrigin() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOriginWatchMappingUsesEffectiveNamespace(t *testing.T) {
+	scheme := bindingTestScheme(t)
+	objects, first := validBindingObjects()
+	const originNamespace = testSharedOriginNamespace
+	first.Spec.OriginServiceRef.Namespace = originNamespace
+	second := first.DeepCopy()
+	second.Name = "second"
+	second.Namespace = "second-tenant"
+	second.UID = types.UID("22222222-3333-4444-5555-666666666666")
+	objects = append(objects, second)
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
+	reconciler := &CloudflareTunnelBindingReconciler{ControllerClass: testControllerClass, Client: kubeClient}
+
+	grantRequests := reconciler.bindingsForObject(context.Background(), &gatewayv1.ReferenceGrant{Namespace: originNamespace})
+	if len(grantRequests) != 2 {
+		t.Fatalf("ReferenceGrant event requests = %#v, want both bindings", grantRequests)
+	}
+	serviceRequests := reconciler.bindingsForObject(context.Background(), &corev1.Service{Name: testGatewayName, Namespace: originNamespace})
+	if len(serviceRequests) != 2 {
+		t.Fatalf("Service event requests = %#v, want both bindings", serviceRequests)
+	}
+
+	storedSecond := &kflaredv1alpha1.CloudflareTunnelBinding{}
+	if err := kubeClient.Get(context.Background(), client.ObjectKeyFromObject(second), storedSecond); err != nil {
+		t.Fatal(err)
+	}
+	storedSecond.Spec.OriginServiceRef.Name = "other-origin"
+	if err := kubeClient.Update(context.Background(), storedSecond); err != nil {
+		t.Fatal(err)
+	}
+	serviceRequests = reconciler.bindingsForObject(context.Background(), &corev1.Service{Name: testGatewayName, Namespace: originNamespace})
+	if len(serviceRequests) != 1 || serviceRequests[0].Namespace != first.Namespace || serviceRequests[0].Name != first.Name {
+		t.Fatalf("Service event after changing one binding = %#v, want only %s/%s", serviceRequests, first.Namespace, first.Name)
+	}
+}
+
+func TestCrossNamespaceOriginGrantLifecycle(t *testing.T) {
+	scheme := bindingTestScheme(t)
+	objects, binding := validBindingObjects()
+	const originNamespace = testSharedOriginNamespace
+	binding.Spec.OriginServiceRef.Namespace = originNamespace
+	service := bindingTestService(t, objects)
+	service.Namespace = originNamespace
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.ClusterCloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}, &appsv1.Deployment{}).
+		WithObjects(objects...).Build()
+	cloudflare := &fakeCloudflareClient{token: testConnectorToken}
+	reconciler := &CloudflareTunnelBindingReconciler{ControllerClass: testControllerClass, Client: kubeClient, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: cloudflare}}
+	request := ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}
+
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("reject origin before grant: %v", err)
+	}
+	assertBindingAcceptedReason(t, kubeClient, request.NamespacedName, "RefNotPermitted")
+	if cloudflare.createCalls != 0 || cloudflare.updateCalls != 0 {
+		t.Fatalf("unauthorized origin caused Cloudflare calls: %#v", cloudflare)
+	}
+
+	grant := originReferenceGrant(binding)
+	if err := kubeClient.Create(context.Background(), grant); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("add finalizer after grant: %v", err)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("program cross-namespace origin after grant: %v", err)
+	}
+	if cloudflare.createCalls != 1 || cloudflare.updateCalls != 1 || len(cloudflare.configuration) != 2 || cloudflare.configuration[0].Service != "http://traefik.traefik.svc.cluster.local:80" {
+		t.Fatalf("unexpected authorized origin programming: %#v", cloudflare)
+	}
+
+	if err := kubeClient.Delete(context.Background(), grant); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("deprogram origin after grant removal: %v", err)
+	}
+	if cloudflare.updateCalls != 2 || len(cloudflare.configuration) != 1 || cloudflare.configuration[0].Service != testNotFoundOrigin {
+		t.Fatalf("grant removal did not deprogram tunnel: %#v", cloudflare.configuration)
+	}
+	assertBindingAcceptedReason(t, kubeClient, request.NamespacedName, "RefNotPermitted")
+}
+
+func TestOriginAuthorizationPrecedesServiceLookup(t *testing.T) {
+	scheme := bindingTestScheme(t)
+	objects, binding := validBindingObjects()
+	binding.Spec.OriginServiceRef.Namespace = testSharedOriginNamespace
+	objects = withoutBindingTestService(objects)
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}).
+		WithObjects(objects...).Build()
+	reconciler := &CloudflareTunnelBindingReconciler{ControllerClass: testControllerClass, Client: kubeClient}
+
+	if _, result, err := reconciler.validateOriginService(context.Background(), binding); err != nil || result == nil {
+		t.Fatalf("validate unauthorized missing Service: result=%v err=%v", result, err)
+	}
+	assertBindingAcceptedReason(t, kubeClient, client.ObjectKeyFromObject(binding), "RefNotPermitted")
+}
+
+func TestOriginServiceValidation(t *testing.T) {
+	tests := []struct {
+		name       string
+		mutate     func([]client.Object, *kflaredv1alpha1.CloudflareTunnelBinding) []client.Object
+		wantReason string
+	}{
+		{name: "same namespace with omitted namespace succeeds"},
+		{name: "explicit same namespace needs no grant", mutate: func(objects []client.Object, binding *kflaredv1alpha1.CloudflareTunnelBinding) []client.Object {
+			binding.Spec.OriginServiceRef.Namespace = binding.Namespace
+			return objects
+		}},
+		{name: "numeric port succeeds", mutate: func(objects []client.Object, binding *kflaredv1alpha1.CloudflareTunnelBinding) []client.Object {
+			binding.Spec.OriginServiceRef.Port = intstr.FromInt32(80)
+			return objects
+		}},
+		{name: "missing Service", wantReason: "ServiceNotFound", mutate: func(objects []client.Object, _ *kflaredv1alpha1.CloudflareTunnelBinding) []client.Object {
+			return withoutBindingTestService(objects)
+		}},
+		{name: "authorized cross-namespace missing Service", wantReason: "ServiceNotFound", mutate: func(objects []client.Object, binding *kflaredv1alpha1.CloudflareTunnelBinding) []client.Object {
+			binding.Spec.OriginServiceRef.Namespace = testSharedOriginNamespace
+			return append(withoutBindingTestService(objects), originReferenceGrant(binding))
+		}},
+		{name: "missing port", wantReason: "ServicePortNotFound", mutate: func(objects []client.Object, binding *kflaredv1alpha1.CloudflareTunnelBinding) []client.Object {
+			binding.Spec.OriginServiceRef.Port = intstr.FromString("missing")
+			return objects
+		}},
+		{name: "authorized cross-namespace missing port", wantReason: "ServicePortNotFound", mutate: func(objects []client.Object, binding *kflaredv1alpha1.CloudflareTunnelBinding) []client.Object {
+			binding.Spec.OriginServiceRef.Namespace = testSharedOriginNamespace
+			binding.Spec.OriginServiceRef.Port = intstr.FromString("missing")
+			bindingTestService(t, objects).Namespace = testSharedOriginNamespace
+			return append(objects, originReferenceGrant(binding))
+		}},
+		{name: "headless Service", wantReason: testInvalidServiceReason, mutate: func(objects []client.Object, _ *kflaredv1alpha1.CloudflareTunnelBinding) []client.Object {
+			bindingTestService(t, objects).Spec.ClusterIP = corev1.ClusterIPNone
+			return objects
+		}},
+		{name: "ExternalName Service", wantReason: testInvalidServiceReason, mutate: func(objects []client.Object, _ *kflaredv1alpha1.CloudflareTunnelBinding) []client.Object {
+			bindingTestService(t, objects).Spec.Type = corev1.ServiceTypeExternalName
+			return objects
+		}},
+		{name: "NodePort Service", wantReason: testInvalidServiceReason, mutate: func(objects []client.Object, _ *kflaredv1alpha1.CloudflareTunnelBinding) []client.Object {
+			bindingTestService(t, objects).Spec.Type = corev1.ServiceTypeNodePort
+			return objects
+		}},
+		{name: "LoadBalancer Service", wantReason: testInvalidServiceReason, mutate: func(objects []client.Object, _ *kflaredv1alpha1.CloudflareTunnelBinding) []client.Object {
+			bindingTestService(t, objects).Spec.Type = corev1.ServiceTypeLoadBalancer
+			return objects
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := bindingTestScheme(t)
+			objects, binding := validBindingObjects()
+			if tt.mutate != nil {
+				objects = tt.mutate(objects, binding)
+			}
+			kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}).
+				WithObjects(objects...).Build()
+			reconciler := &CloudflareTunnelBindingReconciler{ControllerClass: testControllerClass, Client: kubeClient}
+			origin, result, err := reconciler.validateOriginService(context.Background(), binding)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantReason == "" {
+				if result != nil || origin != "http://traefik.tenant.svc.cluster.local:80" {
+					t.Fatalf("origin=%q result=%v, want same-namespace origin", origin, result)
+				}
+				return
+			}
+			if result == nil {
+				t.Fatalf("validation unexpectedly succeeded with origin %q", origin)
+			}
+			assertBindingAcceptedReason(t, kubeClient, client.ObjectKeyFromObject(binding), tt.wantReason)
+		})
+	}
+}
+
+func TestBindingsInDifferentNamespacesCanShareAuthorizedOrigin(t *testing.T) {
+	scheme := bindingTestScheme(t)
+	objects, first := validBindingObjects()
+	const originNamespace = testSharedOriginNamespace
+	first.Spec.OriginServiceRef.Namespace = originNamespace
+	service := bindingTestService(t, objects)
+	service.Namespace = originNamespace
+	firstGrant := originReferenceGrant(first)
+
+	second := first.DeepCopy()
+	second.Name = "second"
+	second.Namespace = "second-tenant"
+	second.UID = types.UID("22222222-3333-4444-5555-666666666666")
+	secondGateway := &gatewayv1.Gateway{}
+	for _, object := range objects {
+		if gateway, ok := object.(*gatewayv1.Gateway); ok {
+			secondGateway = gateway.DeepCopy()
+			break
+		}
+	}
+	secondGateway.Namespace = second.Namespace
+	secondGrant := originReferenceGrant(second)
+	secondGrant.Name = "allow-second-kflared-origin"
+	objects = append(objects, firstGrant, second, secondGateway, secondGrant)
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
+	reconciler := &CloudflareTunnelBindingReconciler{ControllerClass: testControllerClass, Client: kubeClient}
+
+	for _, binding := range []*kflaredv1alpha1.CloudflareTunnelBinding{first, second} {
+		origin, result, err := reconciler.validateOriginService(context.Background(), binding)
+		if err != nil || result != nil || origin != "http://traefik.traefik.svc.cluster.local:80" {
+			t.Fatalf("validate shared origin for %s/%s: origin=%q result=%v err=%v", binding.Namespace, binding.Name, origin, result, err)
+		}
+	}
+}
+
 func TestPrimaryWatchPredicatesFilterControllerClass(t *testing.T) {
 	providerPredicate := clusterProviderClassPredicate(testControllerClass)
 	matchingProvider := readyClusterProvider()
@@ -819,6 +1070,57 @@ func bindingTestClusterProvider(t *testing.T, objects []client.Object) *kflaredv
 	return nil
 }
 
+func bindingTestService(t *testing.T, objects []client.Object) *corev1.Service {
+	t.Helper()
+	for _, object := range objects {
+		if service, ok := object.(*corev1.Service); ok && service.Name == testGatewayName && service.Namespace == testTenantName {
+			return service
+		}
+	}
+	t.Fatal("test objects do not contain the origin Service")
+	return nil
+}
+
+func withoutBindingTestService(objects []client.Object) []client.Object {
+	filtered := make([]client.Object, 0, len(objects))
+	for _, object := range objects {
+		service, ok := object.(*corev1.Service)
+		if ok && service.Name == testGatewayName && service.Namespace == testTenantName {
+			continue
+		}
+		filtered = append(filtered, object)
+	}
+	return filtered
+}
+
+func originReferenceGrant(binding *kflaredv1alpha1.CloudflareTunnelBinding) *gatewayv1.ReferenceGrant {
+	name := gatewayv1.ObjectName(binding.Spec.OriginServiceRef.Name)
+	grant := &gatewayv1.ReferenceGrant{
+		Name: "allow-kflared-origin", Namespace: testSharedOriginNamespace,
+		Spec: gatewayv1.ReferenceGrantSpec{
+			From: []gatewayv1.ReferenceGrantFrom{{
+				Group:     gatewayv1.Group(kflaredv1alpha1.GroupVersion.Group),
+				Kind:      gatewayv1.Kind("CloudflareTunnelBinding"),
+				Namespace: gatewayv1.Namespace(binding.Namespace),
+			}},
+			To: []gatewayv1.ReferenceGrantTo{{Group: gatewayv1.Group(""), Kind: gatewayv1.Kind("Service"), Name: &name}},
+		},
+	}
+	return grant
+}
+
+func assertBindingAcceptedReason(t *testing.T, kubeClient client.Client, key types.NamespacedName, reason string) {
+	t.Helper()
+	binding := &kflaredv1alpha1.CloudflareTunnelBinding{}
+	if err := kubeClient.Get(context.Background(), key, binding); err != nil {
+		t.Fatal(err)
+	}
+	accepted := apiMeta.FindStatusCondition(binding.Status.Conditions, kflaredv1alpha1.BindingConditionAccepted)
+	if accepted == nil || accepted.Status != metav1.ConditionFalse || accepted.Reason != reason {
+		t.Fatalf("Accepted condition = %#v, want False/%s", accepted, reason)
+	}
+}
+
 func setPublishedBindingStatus(binding *kflaredv1alpha1.CloudflareTunnelBinding) {
 	binding.Finalizers = []string{bindingFinalizer}
 	binding.Status = kflaredv1alpha1.CloudflareTunnelBindingStatus{
@@ -958,7 +1260,7 @@ func validBindingObjects() ([]client.Object, *kflaredv1alpha1.CloudflareTunnelBi
 			Controller:        testControllerClass,
 			ProviderRef:       kflaredv1alpha1.LocalReference{Name: testDefaultName},
 			GatewayRef:        kflaredv1alpha1.GatewayReference{Name: testGatewayName, SectionName: testHTTPSectionName},
-			GatewayServiceRef: kflaredv1alpha1.GatewayServiceReference{Name: testGatewayName, Port: intstr.FromString("web")},
+			OriginServiceRef:  kflaredv1alpha1.OriginServiceReference{Name: testGatewayName, Port: intstr.FromString(testOriginPortName)},
 			ConnectorReplicas: 2,
 			DeletionPolicy:    kflaredv1alpha1.DeletionPolicyDelete,
 		},
@@ -988,7 +1290,7 @@ func validBindingObjects() ([]client.Object, *kflaredv1alpha1.CloudflareTunnelBi
 		&corev1.Secret{Name: testAPITokenSecretName, Namespace: defaultSystemNamespace, Data: map[string][]byte{testAPITokenSecretKey: []byte(testAPITokenSecretKey)}},
 		&gatewayv1.GatewayClass{Name: testGatewayName, Spec: gatewayv1.GatewayClassSpec{ControllerName: gatewayv1.GatewayController(traefikControllerName)}},
 		gateway,
-		&corev1.Service{Name: testGatewayName, Namespace: testTenantName, Spec: corev1.ServiceSpec{ClusterIP: "10.0.0.10", Ports: []corev1.ServicePort{{Name: "web", Port: 80}}}},
+		&corev1.Service{Name: testGatewayName, Namespace: testTenantName, Spec: corev1.ServiceSpec{ClusterIP: "10.0.0.10", Ports: []corev1.ServicePort{{Name: testOriginPortName, Port: 80}}}},
 		route,
 	}, binding
 }

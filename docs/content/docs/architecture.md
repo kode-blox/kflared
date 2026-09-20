@@ -20,6 +20,10 @@ Cloudflare edge
 
 The controller reads Traefik-owned Gateway and HTTPRoute status. It requires current Gateway `Accepted=True` and `Programmed=True`, and route-parent `Accepted=True` and `ResolvedRefs=True`. It never writes Gateway API status and does not reinterpret route matches, filters, or backends. Traefik remains the L7 data plane and remains responsible for `ReferenceGrant`-protected backend references.
 
+The binding, Gateway, and eligible HTTPRoutes stay in the binding's application namespace. The origin Service is selected per binding and may reside in another namespace only when a matching Gateway API `ReferenceGrant` is present in the Service namespace. KFlared validates this custom reference during reconciliation before reading the Service; Kubernetes does not automatically enforce it. The grant authorizes a reference, not packet-level networking. Revoking it causes KFlared to deprogram tunnel ingress and remove managed DNS. Origin selection remains per binding because a provider account does not imply one origin: one provider can serve multiple origins, multiple providers can use one origin, and origins can be migrated incrementally for blue-green changes.
+
+Only normal internal `ClusterIP` Services are accepted as origins. Use a dedicated single-port Service because Gateway API `ReferenceGrant` cannot restrict access to a particular port.
+
 For every eligible concrete hostname, the controller writes a complete, canonically ordered remote configuration:
 
 ```yaml
@@ -42,7 +46,7 @@ The controller continuously compares desired and observed state. Kubernetes watc
 | Tunnel and complete ingress config                   | Binding           | Create, recover, repair, delete or retain  |
 | Connector Deployment, PDB, and token Secret          | Binding           | Create, repair, delete                     |
 | DNSEndpoint                                          | Binding           | Create, repair, delete when the CRD exists |
-| GatewayClass, Gateway, HTTPRoute, and ReferenceGrant | Traefik and users | Read only                                  |
+| GatewayClass, Gateway, HTTPRoute, and ReferenceGrant | Traefik and users | Read only; grants are checked for cross-namespace origins |
 | Traefik Service                                      | Administrator     | Read only                                  |
 
 Tunnel names include the cluster identity and complete binding UID. A lost create response can therefore be recovered without adopting a name belonging to another Kubernetes object. Cloudflare's tunnel API does not expose arbitrary controller ownership metadata, so exact deterministic identity, remote-management mode, immutable provider and Gateway identity, and the persisted tunnel ID form the adoption boundary.

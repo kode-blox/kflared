@@ -43,6 +43,14 @@ If a tunnel is deprogrammed or contains no hostnames, verify that:
 
 When no eligible hostname remains, KFlared replaces remote ingress rules with the mandatory `http_status:404` catch-all and removes managed DNS automation.
 
+## Cross-namespace origin authorization
+
+For a cross-namespace `originServiceRef`, create a Gateway API `ReferenceGrant` in the target Service namespace. It must allow `kflared.kodeblox.com` `CloudflareTunnelBinding` objects from the binding namespace to reference core `Service` objects; when `to.name` is present, it must match the Service name. A grant without `to.name` authorizes any Service in that namespace for that source namespace and kind. KFlared checks grants during reconciliation, and grant changes trigger affected bindings to reconcile. If a grant is removed, the binding fails closed, tunnel ingress is deprogrammed, and managed DNS is removed. Check the binding's `Accepted` condition for the authorization failure reason.
+
+Use a dedicated single-port internal `ClusterIP` origin Service. Grants cannot constrain the referenced port, and KFlared rejects headless, `ExternalName`, `NodePort`, and `LoadBalancer` Services. The grant only permits KFlared's reference; it does not configure cluster networking or allow packet flow by itself.
+
+When upgrading from a v1alpha1 release that used `spec.gatewayServiceRef`, update manifests to `spec.originServiceRef`; the alpha rename has no legacy-field alias. If stored bindings exist, pause the old controller, install the new CRD, apply the rewritten bindings, and only then start the new controller. This avoids either controller observing a field it does not understand.
+
 ## Deletion
 
 `spec.deletionPolicy` controls the remote tunnel only:

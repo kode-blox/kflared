@@ -34,6 +34,9 @@ const (
 	testOtherControllerClass           = "other-class"
 	testTenantName                     = "tenant"
 	testGatewayName                    = "traefik"
+	testSharedOriginNamespace          = testGatewayName
+	testOriginPortName                 = "web"
+	testNameField                      = "name"
 	testHTTPSectionName                = "http"
 	testAPITokenSecretName             = "cloudflare-api-token"
 	testAPITokenSecretKey              = "api-token"
@@ -42,6 +45,7 @@ const (
 	testTunnelID                       = "tunnel-id"
 	testOldOrigin                      = "http://old"
 	testNotFoundOrigin                 = "http_status:404"
+	testInvalidServiceReason           = "InvalidService"
 	testTunnelReconciliationReason     = "TunnelReconciliationFailed"
 	testTunnelReconciliationMessage    = "Tunnel reconciliation could not complete"
 	testConnectorReconciliationReason  = "ConnectorReconciliationFailed"

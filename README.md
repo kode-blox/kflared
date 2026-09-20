@@ -21,7 +21,7 @@ See the [KFlared documentation](https://kflared.kodeblox.com), [architecture](do
 - Gateway API v1.6.1 `Gateway` and `HTTPRoute`
 - one `CloudflareTunnelBinding`, one existing Gateway, and one remotely managed tunnel
 - one named HTTP listener and concrete, non-wildcard HTTPRoute hostnames
-- same-namespace binding, Gateway, HTTPRoute, and Traefik Service
+- binding, Gateway, and HTTPRoutes in the application namespace; an origin Service may be cross-namespace with a matching ReferenceGrant
 - official `cloudflare/cloudflared:2026.8.3`, two or more replicas
 - optional ExternalDNS `DNSEndpoint` automation, with exact manual CNAMEs in status otherwise
 
@@ -32,7 +32,7 @@ GRPCRoute, wildcard hostnames, HTTPS origins, direct Service backend routing, sh
 - Kubernetes 1.35-1.37
 - Gateway API v1.6.1 CRDs
 - Traefik 3.7.10+ with Kubernetes Gateway provider enabled
-- an internal, non-headless Traefik Service
+- a normal internal `ClusterIP` Traefik origin Service (dedicated single-port Service recommended)
 - a Cloudflare account API token with only Cloudflare Tunnel/Connector write access required for the selected account
 - optional ExternalDNS and its `externaldns.k8s.io/v1alpha1` DNSEndpoint CRD
 - optional External Secrets Operator and a `ClusterSecretStore` when using the chart's ExternalSecret integration
@@ -61,6 +61,8 @@ Project automation requires Go and PowerShell 7 or newer. Task is pinned in the 
 The checked-in Kustomize manager manifest and Helm chart default to the `kflared` controller class. Set `spec.controller: kflared` on each provider and binding it owns. Override the chart's `controllerClass` when running multiple KFlared installations in one cluster, and use the matching value in their resources.
 
 Create a provider, label an allowed tenant namespace, and create a binding. Adapt the examples under [`config/samples`](config/samples) to the actual account ID, DNS zones, Gateway, listener, and Traefik Service.
+
+The binding keeps its Gateway and eligible HTTPRoutes in its application namespace. Its `originServiceRef` may point to a Service in another namespace if that Service namespace contains a matching Gateway API `ReferenceGrant`. KFlared checks this custom reference during reconciliation; Kubernetes does not automatically enforce it, and the grant does not provide network access. Revoking authorization deprograms the tunnel and removes managed DNS. Since grants cannot authorize a particular port, use a dedicated single-port `ClusterIP` origin Service. Origin selection is per binding, allowing one provider to serve multiple origins, multiple providers to share an origin, and incremental blue-green migration.
 
 ```sh
 kubectl apply -f config/samples/kflared_v1alpha1_clustercloudflareprovider.yaml

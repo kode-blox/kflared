@@ -89,9 +89,9 @@ func TestControllerClassBackfillAfterCRDUpgrade(t *testing.T) {
 	legacyBinding.Name = "legacy-binding"
 	legacyBinding.Namespace = testDefaultName
 	legacyBinding.Spec = kflaredv1alpha1.CloudflareTunnelBindingSpec{
-		ProviderRef:       kflaredv1alpha1.LocalReference{Name: legacyProvider.Name},
-		GatewayRef:        kflaredv1alpha1.GatewayReference{Name: testGatewayResourceName, SectionName: testHTTPSectionName},
-		GatewayServiceRef: kflaredv1alpha1.GatewayServiceReference{Name: testGatewayName, Port: intstr.FromInt32(80)},
+		ProviderRef:      kflaredv1alpha1.LocalReference{Name: legacyProvider.Name},
+		GatewayRef:       kflaredv1alpha1.GatewayReference{Name: testGatewayResourceName, SectionName: testHTTPSectionName},
+		OriginServiceRef: kflaredv1alpha1.OriginServiceReference{Name: testGatewayName, Port: intstr.FromInt32(80)},
 	}
 	createWithoutController(t, ctx, kubeClient, legacyBinding)
 
@@ -137,6 +137,101 @@ func TestControllerClassBackfillAfterCRDUpgrade(t *testing.T) {
 	}
 }
 
+func TestOriginServiceReferenceMigrationAfterCRDUpgrade(t *testing.T) {
+	if runtime.GOOS == testWindowsOS {
+		t.Skip("controller-runtime envtest cannot terminate control-plane processes on Windows; CI runs this test on Linux")
+	}
+	assets, err := envtestAssetsDirectory()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bindingCRD := readCRD(t, filepath.Join("..", "..", "config", "crd", "bases", "kflared.kodeblox.com_cloudflaretunnelbindings.yaml"))
+	legacyCRDDirectory := t.TempDir()
+	writeLegacyOriginReferenceCRD(t, legacyCRDDirectory, bindingCRD)
+	environment := &envtest.Environment{
+		BinaryAssetsDirectory: assets,
+		CRDDirectoryPaths:     []string{legacyCRDDirectory},
+		ErrorIfCRDPathMissing: true,
+	}
+	config, err := environment.Start()
+	if err != nil {
+		t.Fatalf("start envtest: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := environment.Stop(); err != nil {
+			t.Errorf("stop envtest: %v", err)
+		}
+	})
+
+	scheme := bindingTestScheme(t)
+	kubeClient, err := client.New(config, client.Options{Scheme: scheme})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	legacy := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": kflaredv1alpha1.GroupVersion.String(),
+		"kind":       "CloudflareTunnelBinding",
+		"metadata": map[string]any{
+			testNameField: "legacy-origin",
+			"namespace":   testDefaultName,
+		},
+		"spec": map[string]any{
+			"controller":  testControllerClass,
+			"providerRef": map[string]any{testNameField: testDefaultName},
+			"gatewayRef": map[string]any{
+				testNameField: testGatewayResourceName,
+				"sectionName": testHTTPSectionName,
+			},
+			"gatewayServiceRef": map[string]any{testNameField: testGatewayName, "port": testOriginPortName},
+		},
+	}}
+	if err := kubeClient.Create(ctx, legacy); err != nil {
+		t.Fatalf("create binding with released gatewayServiceRef schema: %v", err)
+	}
+
+	crdClient, err := apiextensionsclient.NewForConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upgradeCRD(t, ctx, crdClient, bindingCRD)
+
+	key := client.ObjectKeyFromObject(legacy)
+	var lastErr error
+	err = wait.PollUntilContextTimeout(ctx, 10*time.Millisecond, 10*time.Second, true, func(ctx context.Context) (bool, error) {
+		candidate := &unstructured.Unstructured{}
+		candidate.SetAPIVersion(kflaredv1alpha1.GroupVersion.String())
+		candidate.SetKind("CloudflareTunnelBinding")
+		if err := kubeClient.Get(ctx, key, candidate); err != nil {
+			return false, err
+		}
+		if err := unstructured.SetNestedMap(candidate.Object, map[string]any{testNameField: testGatewayName, "namespace": testSharedOriginNamespace, "port": testOriginPortName}, "spec", "originServiceRef"); err != nil {
+			return false, err
+		}
+		unstructured.RemoveNestedField(candidate.Object, "spec", "gatewayServiceRef")
+		if err := kubeClient.Update(ctx, candidate); err != nil {
+			lastErr = err
+			if apierrors.IsConflict(err) || apierrors.IsInvalid(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("rewrite stored binding to originServiceRef after CRD upgrade: %v (last update error: %v)", err, lastErr)
+	}
+
+	stored := &kflaredv1alpha1.CloudflareTunnelBinding{}
+	if err := kubeClient.Get(ctx, key, stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Spec.OriginServiceRef.Name != testGatewayName || stored.Spec.OriginServiceRef.Namespace != testSharedOriginNamespace || stored.Spec.OriginServiceRef.Port.String() != testOriginPortName {
+		t.Fatalf("migrated originServiceRef = %#v", stored.Spec.OriginServiceRef)
+	}
+}
+
 func readCRD(t *testing.T, path string) *apiextensionsv1.CustomResourceDefinition {
 	t.Helper()
 	content, err := os.ReadFile(path)
@@ -166,6 +261,28 @@ func writeLegacyCRD(t *testing.T, directory string, current *apiextensionsv1.Cus
 		}
 	}
 	schema.Required = filteredRequired
+	legacy.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"] = schema
+	content, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, legacy.Name+".json"), content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeLegacyOriginReferenceCRD(t *testing.T, directory string, current *apiextensionsv1.CustomResourceDefinition) {
+	t.Helper()
+	legacy := current.DeepCopy()
+	schema := legacy.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
+	originSchema := schema.Properties["originServiceRef"]
+	delete(schema.Properties, "originServiceRef")
+	schema.Properties["gatewayServiceRef"] = originSchema
+	for i, field := range schema.Required {
+		if field == "originServiceRef" {
+			schema.Required[i] = "gatewayServiceRef"
+		}
+	}
 	legacy.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"] = schema
 	content, err := json.Marshal(legacy)
 	if err != nil {
@@ -315,12 +432,19 @@ func TestCRDDefaultsAndImmutableOwnershipFields(t *testing.T) {
 			Controller:        testControllerClass,
 			ProviderRef:       kflaredv1alpha1.LocalReference{Name: testDefaultName},
 			GatewayRef:        kflaredv1alpha1.GatewayReference{Name: testGatewayResourceName, SectionName: testHTTPSectionName},
-			GatewayServiceRef: kflaredv1alpha1.GatewayServiceReference{Name: testGatewayName, Port: intstr.FromInt32(80)},
+			OriginServiceRef:  kflaredv1alpha1.OriginServiceReference{Name: testGatewayName, Port: intstr.FromInt32(80)},
 			ConnectorReplicas: 11,
 		},
 	}
 	if err := kubeClient.Create(ctx, tooManyReplicas); err == nil {
 		t.Fatal("connectorReplicas above ten unexpectedly passed CRD validation")
+	}
+	invalidOriginNamespace := tooManyReplicas.DeepCopy()
+	invalidOriginNamespace.Name = "invalid-origin-namespace"
+	invalidOriginNamespace.Spec.ConnectorReplicas = 2
+	invalidOriginNamespace.Spec.OriginServiceRef.Namespace = "Not-A-Namespace"
+	if err := kubeClient.Create(ctx, invalidOriginNamespace); err == nil {
+		t.Fatal("invalid origin Service namespace unexpectedly passed CRD validation")
 	}
 	tooManyReplicas.Spec.Controller = ""
 	tooManyReplicas.Spec.ConnectorReplicas = 2
@@ -331,10 +455,10 @@ func TestCRDDefaultsAndImmutableOwnershipFields(t *testing.T) {
 	binding := &kflaredv1alpha1.CloudflareTunnelBinding{
 		Name: "defaults", Namespace: testDefaultName,
 		Spec: kflaredv1alpha1.CloudflareTunnelBindingSpec{
-			Controller:        testControllerClass,
-			ProviderRef:       kflaredv1alpha1.LocalReference{Name: testDefaultName},
-			GatewayRef:        kflaredv1alpha1.GatewayReference{Name: testGatewayResourceName, SectionName: testHTTPSectionName},
-			GatewayServiceRef: kflaredv1alpha1.GatewayServiceReference{Name: testGatewayName, Port: intstr.FromInt32(80)},
+			Controller:       testControllerClass,
+			ProviderRef:      kflaredv1alpha1.LocalReference{Name: testDefaultName},
+			GatewayRef:       kflaredv1alpha1.GatewayReference{Name: testGatewayResourceName, SectionName: testHTTPSectionName},
+			OriginServiceRef: kflaredv1alpha1.OriginServiceReference{Name: testGatewayName, Port: intstr.FromInt32(80)},
 		},
 	}
 	if err := kubeClient.Create(ctx, binding); err != nil {
@@ -377,9 +501,9 @@ func TestCRDDefaultsAndImmutableOwnershipFields(t *testing.T) {
 	missingBinding.Name = "missing-controller"
 	missingBinding.Namespace = testDefaultName
 	missingBinding.Spec = kflaredv1alpha1.CloudflareTunnelBindingSpec{
-		ProviderRef:       kflaredv1alpha1.LocalReference{Name: testDefaultName},
-		GatewayRef:        kflaredv1alpha1.GatewayReference{Name: testGatewayResourceName, SectionName: testHTTPSectionName},
-		GatewayServiceRef: kflaredv1alpha1.GatewayServiceReference{Name: testGatewayName, Port: intstr.FromInt32(80)},
+		ProviderRef:      kflaredv1alpha1.LocalReference{Name: testDefaultName},
+		GatewayRef:       kflaredv1alpha1.GatewayReference{Name: testGatewayResourceName, SectionName: testHTTPSectionName},
+		OriginServiceRef: kflaredv1alpha1.OriginServiceReference{Name: testGatewayName, Port: intstr.FromInt32(80)},
 	}
 	bindingObject, err := k8sruntime.DefaultUnstructuredConverter.ToUnstructured(missingBinding)
 	if err != nil {
