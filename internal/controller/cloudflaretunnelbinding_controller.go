@@ -969,7 +969,7 @@ func connectorPodSpec(secretName, image string) corev1.PodSpec {
 				Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 			},
 			ReadinessProbe: &corev1.Probe{HTTPGet: &corev1.HTTPGetAction{Path: "/ready", Port: intstr.FromString("metrics")}, PeriodSeconds: 10, FailureThreshold: 3},
-			LivenessProbe:  &corev1.Probe{HTTPGet: &corev1.HTTPGetAction{Path: "/ready", Port: intstr.FromString("metrics")}, InitialDelaySeconds: 10, PeriodSeconds: 20, FailureThreshold: 3},
+			LivenessProbe:  &corev1.Probe{HTTPGet: &corev1.HTTPGetAction{Path: "/healthcheck", Port: intstr.FromString("metrics")}, InitialDelaySeconds: 10, PeriodSeconds: 20, FailureThreshold: 3},
 			Resources: corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{corev1.ResourceCPU: resourceMustParse("50m"), corev1.ResourceMemory: resourceMustParse("64Mi")},
 				Limits:   corev1.ResourceList{corev1.ResourceCPU: resourceMustParse("500m"), corev1.ResourceMemory: resourceMustParse("256Mi")},

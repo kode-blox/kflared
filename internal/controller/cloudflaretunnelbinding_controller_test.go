@@ -130,9 +130,16 @@ func TestBindingReconcileCreatesIdempotentTunnelAndHardenedConnectors(t *testing
 	if pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken || pod.SecurityContext == nil || pod.SecurityContext.SeccompProfile == nil {
 		t.Fatalf("connector pod is not hardened: %#v", pod)
 	}
-	containerSecurity := pod.Containers[0].SecurityContext
+	connector := pod.Containers[0]
+	containerSecurity := connector.SecurityContext
 	if containerSecurity == nil || containerSecurity.ReadOnlyRootFilesystem == nil || !*containerSecurity.ReadOnlyRootFilesystem {
 		t.Fatalf("connector container is not hardened: %#v", pod.Containers)
+	}
+	if connector.ReadinessProbe == nil || connector.ReadinessProbe.HTTPGet == nil || connector.ReadinessProbe.HTTPGet.Path != "/ready" {
+		t.Fatalf("connector readiness does not require an active tunnel connection: %#v", connector.ReadinessProbe)
+	}
+	if connector.LivenessProbe == nil || connector.LivenessProbe.HTTPGet == nil || connector.LivenessProbe.HTTPGet.Path != "/healthcheck" {
+		t.Fatalf("connector liveness depends on tunnel connectivity: %#v", connector.LivenessProbe)
 	}
 	secret := &corev1.Secret{}
 	if err := kubeClient.Get(context.Background(), types.NamespacedName{Namespace: defaultSystemNamespace, Name: resourceName}, secret); err != nil {
