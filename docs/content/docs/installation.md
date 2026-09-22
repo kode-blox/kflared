@@ -106,6 +106,30 @@ externalSecrets:
 
 The chart does not install External Secrets Operator or its CRDs. The remote key depends on the configured backend; the resulting `api-token` key must match `ClusterCloudflareProvider.spec.apiTokenSecretRef.key`.
 
+## Optional chart-managed provider
+
+The chart can optionally create one cluster-scoped `ClusterCloudflareProvider`. It is disabled by default because its account and namespace-access policy are installation-specific. When enabled, the chart derives the provider's `spec.controller` from `controllerClass`, and defaults its cluster-scoped name to the chart fullname.
+
+```yaml
+clusterCloudflareProvider:
+  enabled: true
+  name: cloudflare-production
+  accountID: 0123456789abcdef0123456789abcdef
+  apiTokenSecretRef:
+    key: api-token
+  allowedDNSZones:
+    - example.com
+  bindingNamespaceSelector:
+    matchLabels:
+      kflared.kodeblox.com/cloudflare-provider: cloudflare-production
+```
+
+`accountID` and one or more `allowedDNSZones` are required when enabled. `apiTokenSecretRef.name` is optional: it defaults to `externalSecrets.targetSecretName`, so the same rendered provider works with either a manually created Secret or the chart's optional `ExternalSecret`. The key defaults to `api-token` and must match the generated or manually managed Secret key.
+
+> **Warning:** `bindingNamespaceSelector: {}` intentionally permits bindings from every namespace. Use a namespace-label selector for a shared cluster.
+
+Before uninstalling this release, delete or migrate every `CloudflareTunnelBinding` that references the chart-managed provider. The provider finalizer blocks deletion while bindings still reference it; because Helm also removes the controller, the finalizer cannot finish after an uninstall with remaining bindings.
+
 The controller has no cluster-wide Secret permission. A namespace-scoped Role allows it to read credentials and manage connector resources only in its system namespace.
 
 ## Create a provider and binding

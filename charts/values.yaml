@@ -44,6 +44,22 @@ externalSecrets:
   #   remoteRef:
   #     key: kflared/cloudflare-api-token
 
+# Optionally create the cluster-scoped Cloudflare provider managed by this KFlared release.
+# The API token Secret is expected in the release namespace. Its name defaults to
+# externalSecrets.targetSecretName, so this also supports an administrator-managed Secret.
+clusterCloudflareProvider:
+  enabled: false
+  # Defaults to the chart fullname. Set a stable unique value when multiple releases share a cluster.
+  name: ""
+  accountID: ""
+  apiTokenSecretRef:
+    # Defaults to externalSecrets.targetSecretName.
+    name: ""
+    key: api-token
+  allowedDNSZones: []
+  # An empty selector ({}) intentionally permits bindings from every namespace.
+  bindingNamespaceSelector: {}
+
 leaderElection:
   enabled: true
 

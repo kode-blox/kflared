@@ -51,6 +51,28 @@ externalSecrets:
 
 The remote key is provider-specific. The resulting `api-token` key must match `ClusterCloudflareProvider.spec.apiTokenSecretRef.key`.
 
+## Optional ClusterCloudflareProvider
+
+The chart can create one cluster-scoped `ClusterCloudflareProvider` for this controller release. It is disabled by default because the Cloudflare account boundary and namespace access policy are cluster-specific. When enabled, `spec.controller` is always derived from `controllerClass`, and the provider name defaults to the chart fullname. Set `name` to a stable, unique value when a release name is not the desired cluster-scoped identity.
+
+```yaml
+clusterCloudflareProvider:
+  enabled: true
+  name: cloudflare-production
+  accountID: 0123456789abcdef0123456789abcdef
+  apiTokenSecretRef:
+    key: api-token
+  allowedDNSZones:
+    - example.com
+  bindingNamespaceSelector:
+    matchLabels:
+      kflared.kodeblox.com/cloudflare-provider: cloudflare-production
+```
+
+`apiTokenSecretRef.name` is optional and defaults to `externalSecrets.targetSecretName`, which keeps manual-Secret and External Secrets Operator installations on the same credential contract. `allowedDNSZones` must contain at least one zone. `bindingNamespaceSelector: {}` intentionally permits bindings from every namespace; use a label selector in shared clusters.
+
+Before uninstalling a release that manages a provider, delete or migrate all `CloudflareTunnelBinding` resources that reference it. The provider finalizer correctly blocks deletion while bindings remain, but Helm also removes the controller during uninstall and cannot complete that finalization afterward.
+
 Use `--skip-crds` with Helm, or `spec.source.helm.skipCrds: true` with Argo CD, only when cluster administrators manage these CRDs separately. Use `--include-crds` when rendering the complete chart with `helm template`.
 
 Set `serviceMonitor.enabled=true` only when the Prometheus Operator CRDs are already installed.

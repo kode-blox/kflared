@@ -11,6 +11,7 @@
     "serviceAccount",
     "rbac",
     "externalSecrets",
+    "clusterCloudflareProvider",
     "leaderElection",
     "metrics",
     "serviceMonitor"
@@ -115,6 +116,62 @@
         }
       }
     },
+    "clusterCloudflareProvider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "name", "accountID", "apiTokenSecretRef", "allowedDNSZones", "bindingNamespaceSelector"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "name": {
+          "type": "string",
+          "pattern": "^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+          "maxLength": 63,
+          "description": "Cluster-scoped provider name. Empty defaults to the chart fullname."
+        },
+        "accountID": {"type": "string", "maxLength": 32},
+        "apiTokenSecretRef": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "key"],
+          "properties": {
+            "name": {"type": "string"},
+            "key": {"type": "string", "minLength": 1, "default": "api-token"}
+          }
+        },
+        "allowedDNSZones": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "bindingNamespaceSelector": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "matchLabels": {
+              "type": "object",
+              "additionalProperties": {"type": "string"}
+            },
+            "matchExpressions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["key", "operator"],
+                "properties": {
+                  "key": {"type": "string"},
+                  "operator": {"type": "string", "enum": ["In", "NotIn", "Exists", "DoesNotExist"]},
+                  "values": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                  }
+                }
+              }
+            }
+          },
+          "description": "Namespace label selector. An empty object intentionally permits every namespace."
+        }
+      }
+    },
     "leaderElection": {
       "type": "object",
       "additionalProperties": false,
@@ -195,6 +252,29 @@
             "properties": {
               "secretStore": {"minLength": 1},
               "secrets": {"minItems": 1}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "clusterCloudflareProvider": {
+            "properties": {
+              "enabled": {"const": true}
+            },
+            "required": ["enabled"]
+          }
+        },
+        "required": ["clusterCloudflareProvider"]
+      },
+      "then": {
+        "properties": {
+          "clusterCloudflareProvider": {
+            "properties": {
+              "accountID": {"minLength": 1},
+              "allowedDNSZones": {"minItems": 1}
             }
           }
         }

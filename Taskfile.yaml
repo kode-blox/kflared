@@ -272,6 +272,10 @@ tasks:
               --set externalSecrets.secretStore=example-store `
               --set externalSecrets.secrets[0].secretKey=api-token `
               --set externalSecrets.secrets[0].remoteRef.key=kflared/cloudflare-api-token `
+              --set clusterCloudflareProvider.enabled=true `
+              --set clusterCloudflareProvider.accountID=0123456789abcdef0123456789abcdef `
+              --set clusterCloudflareProvider.allowedDNSZones[0]=example.com `
+              --set clusterCloudflareProvider.bindingNamespaceSelector.matchLabels.environment=test `
               --set serviceMonitor.enabled=true | Out-Null
             exit $LASTEXITCODE
           '
