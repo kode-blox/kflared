@@ -53,17 +53,18 @@ import (
 )
 
 const (
-	bindingFinalizer         = "kflared.kodeblox.com/tunnel-cleanup"
-	traefikControllerName    = "traefik.io/gateway-controller"
-	defaultCloudflaredImage  = "cloudflare/cloudflared:2026.8.3"
-	ownerUIDLabel            = "kflared.kodeblox.com/binding-uid"
-	managedByLabel           = "app.kubernetes.io/managed-by"
-	managedByValue           = "kflared"
-	dnsEndpointAPIVersion    = "externaldns.k8s.io/v1alpha1"
-	dnsEndpointKind          = "DNSEndpoint"
-	tunnelCNAMEZone          = "cfargotunnel.com"
-	defaultConnectorReplicas = int32(2)
-	maxConnectorReplicas     = int32(10)
+	bindingFinalizer          = "kflared.kodeblox.com/tunnel-cleanup"
+	traefikControllerName     = "traefik.io/gateway-controller"
+	defaultCloudflaredImage   = "cloudflare/cloudflared:2026.8.3"
+	ownerUIDLabel             = "kflared.kodeblox.com/binding-uid"
+	managedByLabel            = "app.kubernetes.io/managed-by"
+	managedByValue            = "kflared"
+	dnsEndpointAPIVersion     = "externaldns.k8s.io/v1alpha1"
+	dnsEndpointKind           = "DNSEndpoint"
+	cloudflareProxiedProperty = "cloudflare/proxied"
+	tunnelCNAMEZone           = "cfargotunnel.com"
+	defaultConnectorReplicas  = int32(2)
+	maxConnectorReplicas      = int32(10)
 )
 
 var errClusterProviderStatusUnknown = errors.New("ClusterCloudflareProvider status is not currently known")
@@ -473,6 +474,10 @@ func (r *CloudflareTunnelBindingReconciler) reconcileDNSEndpoint(ctx context.Con
 				"dnsName":    hostname,
 				"recordType": "CNAME",
 				"targets":    []any{target},
+				"providerSpecific": []any{map[string]any{
+					"name":  cloudflareProxiedProperty,
+					"value": "true",
+				}},
 			})
 		}
 		return unstructured.SetNestedSlice(endpoint.Object, items, "spec", "endpoints")

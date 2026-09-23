@@ -19,7 +19,7 @@ The binding's `status.resources` lists the connector Deployment, PodDisruptionBu
 
 ## DNS modes
 
-When the ExternalDNS `DNSEndpoint` CRD is discoverable, KFlared owns a `DNSEndpoint` containing CNAMEs to `<tunnel-id>.cfargotunnel.com`. ExternalDNS remains responsible for applying those records.
+When the ExternalDNS `DNSEndpoint` CRD is discoverable, KFlared owns a `DNSEndpoint` containing Cloudflare-proxied CNAMEs to `<tunnel-id>.cfargotunnel.com`. ExternalDNS remains responsible for applying those records.
 
 Without the CRD, KFlared reports every required CNAME in `status.dnsRecords` and sets:
 
