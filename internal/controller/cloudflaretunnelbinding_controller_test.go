@@ -105,26 +105,8 @@ func TestBindingReconcileCreatesIdempotentTunnelAndHardenedConnectors(t *testing
 		t.Fatalf("create tunnel and connectors: %v", err)
 	}
 	resourceName := connectorResourceName(binding.UID)
-	endpoint := &unstructured.Unstructured{}
-	endpoint.SetAPIVersion(dnsEndpointAPIVersion)
-	endpoint.SetKind(dnsEndpointKind)
-	if err := kubeClient.Get(context.Background(), types.NamespacedName{Namespace: binding.Namespace, Name: resourceName}, endpoint); err != nil {
-		t.Fatal(err)
-	}
-	unproxiedEndpoints, found, err := unstructured.NestedSlice(endpoint.Object, "spec", "endpoints")
-	if err != nil || !found || len(unproxiedEndpoints) != 1 {
-		t.Fatalf("get DNSEndpoint spec.endpoints: found=%t endpoints=%#v err=%v", found, unproxiedEndpoints, err)
-	}
-	unproxiedEndpoints[0].(map[string]any)["providerSpecific"] = []any{map[string]any{
-		"name":  "cloudflare/proxied",
-		"value": "false",
-	}}
-	if err := unstructured.SetNestedSlice(endpoint.Object, unproxiedEndpoints, "spec", "endpoints"); err != nil {
-		t.Fatal(err)
-	}
-	if err := kubeClient.Update(context.Background(), endpoint); err != nil {
-		t.Fatal(err)
-	}
+	endpointKey := types.NamespacedName{Namespace: binding.Namespace, Name: resourceName}
+	setTestDNSEndpointProxyValue(t, kubeClient, endpointKey, "false")
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 		t.Fatalf("repair DNSEndpoint proxy metadata: %v", err)
 	}
@@ -171,16 +153,6 @@ func TestBindingReconcileCreatesIdempotentTunnelAndHardenedConnectors(t *testing
 	if string(secret.Data["token"]) != testConnectorToken {
 		t.Fatal("connector token Secret was not reconciled")
 	}
-	endpoint = &unstructured.Unstructured{}
-	endpoint.SetAPIVersion(dnsEndpointAPIVersion)
-	endpoint.SetKind(dnsEndpointKind)
-	if err := kubeClient.Get(context.Background(), types.NamespacedName{Namespace: binding.Namespace, Name: resourceName}, endpoint); err != nil {
-		t.Fatal(err)
-	}
-	actualEndpoints, found, err := unstructured.NestedSlice(endpoint.Object, "spec", "endpoints")
-	if err != nil {
-		t.Fatal(err)
-	}
 	expectedEndpoints := []any{map[string]any{
 		"dnsName":    testApplicationHostname,
 		"recordType": "CNAME",
@@ -190,9 +162,7 @@ func TestBindingReconcileCreatesIdempotentTunnelAndHardenedConnectors(t *testing
 			"value": "true",
 		}},
 	}}
-	if !found || !reflect.DeepEqual(actualEndpoints, expectedEndpoints) {
-		t.Fatalf("DNSEndpoint spec.endpoints = %#v, want %#v", actualEndpoints, expectedEndpoints)
-	}
+	assertTestDNSEndpointEndpoints(t, kubeClient, endpointKey, expectedEndpoints)
 }
 
 func TestBindingReconcileIgnoresOtherControllerClassBeforeDeletionEffects(t *testing.T) {
@@ -1109,6 +1079,55 @@ func bindingTestRESTMapper() apiMeta.RESTMapper {
 	mapper := apiMeta.NewDefaultRESTMapper([]schema.GroupVersion{groupVersion})
 	mapper.Add(groupVersion.WithKind(dnsEndpointKind), apiMeta.RESTScopeNamespace)
 	return mapper
+}
+
+func setTestDNSEndpointProxyValue(t *testing.T, kubeClient client.Client, key types.NamespacedName, value string) {
+	t.Helper()
+	endpoint := getTestDNSEndpoint(t, kubeClient, key)
+	endpoints, found, err := unstructured.NestedSlice(endpoint.Object, "spec", "endpoints")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || len(endpoints) != 1 {
+		t.Fatalf("DNSEndpoint spec.endpoints = %#v, want one endpoint", endpoints)
+	}
+	item, ok := endpoints[0].(map[string]any)
+	if !ok {
+		t.Fatalf("DNSEndpoint endpoint = %#v, want an object", endpoints[0])
+	}
+	item["providerSpecific"] = []any{map[string]any{
+		"name":  "cloudflare/proxied",
+		"value": value,
+	}}
+	if err := unstructured.SetNestedSlice(endpoint.Object, endpoints, "spec", "endpoints"); err != nil {
+		t.Fatal(err)
+	}
+	if err := kubeClient.Update(context.Background(), endpoint); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertTestDNSEndpointEndpoints(t *testing.T, kubeClient client.Client, key types.NamespacedName, expected []any) {
+	t.Helper()
+	endpoint := getTestDNSEndpoint(t, kubeClient, key)
+	actual, found, err := unstructured.NestedSlice(endpoint.Object, "spec", "endpoints")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || !reflect.DeepEqual(actual, expected) {
+		t.Fatalf("DNSEndpoint spec.endpoints = %#v, want %#v", actual, expected)
+	}
+}
+
+func getTestDNSEndpoint(t *testing.T, kubeClient client.Client, key types.NamespacedName) *unstructured.Unstructured {
+	t.Helper()
+	endpoint := &unstructured.Unstructured{}
+	endpoint.SetAPIVersion(dnsEndpointAPIVersion)
+	endpoint.SetKind(dnsEndpointKind)
+	if err := kubeClient.Get(context.Background(), key, endpoint); err != nil {
+		t.Fatal(err)
+	}
+	return endpoint
 }
 
 func bindingTestClusterProvider(t *testing.T, objects []client.Object) *kflaredv1alpha1.ClusterCloudflareProvider {
