@@ -471,18 +471,7 @@ func TestCRDDefaultsAndImmutableOwnershipFields(t *testing.T) {
 	if actual.Spec.ConnectorReplicas != 2 || actual.Spec.DeletionPolicy != kflaredv1alpha1.DeletionPolicyDelete || actual.Spec.DNSAutomationEnabled == nil || !*actual.Spec.DNSAutomationEnabled {
 		t.Fatalf("defaults replicas=%d deletionPolicy=%q dnsAutomationEnabled=%v", actual.Spec.ConnectorReplicas, actual.Spec.DeletionPolicy, actual.Spec.DNSAutomationEnabled)
 	}
-	dnsDisabled := binding.DeepCopy()
-	dnsDisabled.ObjectMeta = metav1.ObjectMeta{Name: "dns-automation-disabled", Namespace: testDefaultName}
-	dnsDisabled.Spec.DNSAutomationEnabled = boolPointer(false)
-	if err := kubeClient.Create(ctx, dnsDisabled); err != nil {
-		t.Fatalf("create binding with DNS automation disabled: %v", err)
-	}
-	if err := kubeClient.Get(ctx, client.ObjectKeyFromObject(dnsDisabled), dnsDisabled); err != nil {
-		t.Fatal(err)
-	}
-	if dnsDisabled.Spec.DNSAutomationEnabled == nil || *dnsDisabled.Spec.DNSAutomationEnabled {
-		t.Fatal("explicit DNS automation opt-out was not preserved")
-	}
+	assertDNSAutomationOptOutPreserved(t, ctx, kubeClient, binding)
 	actual.Spec.Controller = testOtherControllerClass
 	if err := kubeClient.Update(ctx, actual); err == nil {
 		t.Fatal("binding controller class mutation unexpectedly passed CRD validation")
@@ -527,6 +516,22 @@ func TestCRDDefaultsAndImmutableOwnershipFields(t *testing.T) {
 	missingBindingUnstructured.SetKind("CloudflareTunnelBinding")
 	if err := kubeClient.Create(ctx, missingBindingUnstructured); err == nil {
 		t.Fatal("binding without controller unexpectedly passed CRD validation")
+	}
+}
+
+func assertDNSAutomationOptOutPreserved(t *testing.T, ctx context.Context, kubeClient client.Client, binding *kflaredv1alpha1.CloudflareTunnelBinding) {
+	t.Helper()
+	dnsDisabled := binding.DeepCopy()
+	dnsDisabled.ObjectMeta = metav1.ObjectMeta{Name: "dns-automation-disabled", Namespace: testDefaultName}
+	dnsDisabled.Spec.DNSAutomationEnabled = new(false)
+	if err := kubeClient.Create(ctx, dnsDisabled); err != nil {
+		t.Fatalf("create binding with DNS automation disabled: %v", err)
+	}
+	if err := kubeClient.Get(ctx, client.ObjectKeyFromObject(dnsDisabled), dnsDisabled); err != nil {
+		t.Fatal(err)
+	}
+	if dnsDisabled.Spec.DNSAutomationEnabled == nil || *dnsDisabled.Spec.DNSAutomationEnabled {
+		t.Fatal("explicit DNS automation opt-out was not preserved")
 	}
 }
 

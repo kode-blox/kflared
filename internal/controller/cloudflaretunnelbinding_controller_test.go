@@ -197,7 +197,7 @@ func TestBindingReconcileDisablesDNSAutomationAndDeletesOwnedDNSEndpoint(t *test
 	if err := kubeClient.Get(context.Background(), request.NamespacedName, storedBinding); err != nil {
 		t.Fatal(err)
 	}
-	storedBinding.Spec.DNSAutomationEnabled = boolPointer(false)
+	storedBinding.Spec.DNSAutomationEnabled = new(false)
 	if err := kubeClient.Update(context.Background(), storedBinding); err != nil {
 		t.Fatalf("disable DNS automation: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestBindingReconcileDisablesDNSAutomationAndDeletesOwnedDNSEndpoint(t *test
 func TestBindingReconcileDoesNotCreateDNSEndpointWhenDNSAutomationIsDisabled(t *testing.T) {
 	scheme := bindingTestScheme(t)
 	objects, binding := validBindingObjects()
-	binding.Spec.DNSAutomationEnabled = boolPointer(false)
+	binding.Spec.DNSAutomationEnabled = new(false)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.ClusterCloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}, &appsv1.Deployment{}).
 		WithObjects(objects...).Build()
@@ -290,7 +290,7 @@ func TestBindingReconcileDefaultsNilDNSAutomationToEnabled(t *testing.T) {
 func TestBindingReconcileRefusesToDeleteUnownedDNSEndpointWhenDNSAutomationIsDisabled(t *testing.T) {
 	scheme := bindingTestScheme(t)
 	objects, binding := validBindingObjects()
-	binding.Spec.DNSAutomationEnabled = boolPointer(false)
+	binding.Spec.DNSAutomationEnabled = new(false)
 	endpointKey := types.NamespacedName{Namespace: binding.Namespace, Name: connectorResourceName(binding.UID)}
 	endpoint := &unstructured.Unstructured{}
 	endpoint.SetAPIVersion(dnsEndpointAPIVersion)
@@ -1483,7 +1483,7 @@ func validBindingObjects() ([]client.Object, *kflaredv1alpha1.CloudflareTunnelBi
 			OriginServiceRef:     kflaredv1alpha1.OriginServiceReference{Name: testGatewayName, Port: intstr.FromString(testOriginPortName)},
 			ConnectorReplicas:    2,
 			DeletionPolicy:       kflaredv1alpha1.DeletionPolicyDelete,
-			DNSAutomationEnabled: boolPointer(true),
+			DNSAutomationEnabled: new(true),
 		},
 	}
 	gateway := &gatewayv1.Gateway{
@@ -1514,8 +1514,4 @@ func validBindingObjects() ([]client.Object, *kflaredv1alpha1.CloudflareTunnelBi
 		&corev1.Service{Name: testGatewayName, Namespace: testTenantName, Spec: corev1.ServiceSpec{ClusterIP: "10.0.0.10", Ports: []corev1.ServicePort{{Name: testOriginPortName, Port: 80}}}},
 		route,
 	}, binding
-}
-
-func boolPointer(value bool) *bool {
-	return &value
 }
