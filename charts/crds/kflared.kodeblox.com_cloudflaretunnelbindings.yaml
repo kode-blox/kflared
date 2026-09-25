@@ -77,6 +77,13 @@ spec:
                 - Delete
                 - Retain
                 type: string
+              dnsAutomationEnabled:
+                default: true
+                description: |-
+                  dnsAutomationEnabled controls whether KFlared creates an ExternalDNS DNSEndpoint
+                  for the accepted HTTPRoute hostnames. Disable it when those hostnames must retain
+                  DNS records managed outside this binding.
+                type: boolean
               gatewayRef:
                 description: GatewayReference selects one listener on a Gateway in
                   the binding namespace.

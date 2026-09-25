@@ -55,17 +55,19 @@ spec:
     namespace: traefik
     port: cloudflare
   connectorReplicas: 2
+  dnsAutomationEnabled: true
   deletionPolicy: Delete
 ```
 
-| Field               | Purpose                                                                                             |
-| ------------------- | --------------------------------------------------------------------------------------------------- |
-| `controller`        | Required, immutable KFlared controller class that owns this binding.                                 |
-| `providerRef.name`  | Cluster-scoped provider to use. The reference is immutable.                                         |
-| `gatewayRef`        | Existing Gateway and HTTP listener in the binding namespace. The reference is immutable.            |
-| `originServiceRef`  | Service name and port used as the tunnel origin; namespace defaults to the binding namespace.       |
-| `connectorReplicas` | Official cloudflared connector replicas. Defaults to and cannot be lower than `2`.                  |
-| `deletionPolicy`    | `Delete` removes the remote tunnel; `Retain` leaves it and its remote configuration intact.         |
+| Field                  | Purpose                                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `controller`           | Required, immutable KFlared controller class that owns this binding.                                         |
+| `providerRef.name`     | Cluster-scoped provider to use. The reference is immutable.                                                 |
+| `gatewayRef`           | Existing Gateway and HTTP listener in the binding namespace. The reference is immutable.                    |
+| `originServiceRef`     | Service name and port used as the tunnel origin; namespace defaults to the binding namespace.               |
+| `connectorReplicas`    | Official cloudflared connector replicas. Defaults to and cannot be lower than `2`.                          |
+| `dnsAutomationEnabled` | Whether KFlared manages an ExternalDNS `DNSEndpoint`. Defaults to `true`; set `false` for external DNS.     |
+| `deletionPolicy`       | `Delete` removes the remote tunnel; `Retain` leaves it and its remote configuration intact.                 |
 
 The binding, Gateway, and eligible HTTPRoutes remain in the same application namespace. Only the origin Service may be elsewhere. A cross-namespace origin requires a matching Gateway API `ReferenceGrant` in the Service namespace; KFlared checks that grant during reconciliation because Kubernetes does not automatically enforce this custom reference. Same-namespace origins need no grant. Eligible routes must expose concrete, non-wildcard hostnames and report current `Accepted=True` and `ResolvedRefs=True` status for the selected Gateway listener.
 
@@ -90,6 +92,8 @@ The origin must be a normal internal `ClusterIP` Service with the requested name
 
 Origin selection belongs to each binding because provider identity does not imply origin identity. This allows one provider to serve multiple origins, multiple providers to use one origin, and incremental blue-green migration without changing other bindings.
 
+DNS automation is also selected per binding. Leave `dnsAutomationEnabled` omitted or set it to `true` to publish each eligible hostname as a Cloudflare-proxied CNAME to the tunnel through ExternalDNS. Set it to `false` when the public hostname must keep an externally managed target, such as a static site reached by users while a Cloudflare Worker reaches this tunnel through Workers VPC. KFlared still programs the hostname into the tunnel, but removes any previously owned `DNSEndpoint` and does not report a replacement CNAME as required DNS intent.
+
 This v1alpha1 revision renames `spec.gatewayServiceRef` to `spec.originServiceRef`. There is no compatibility alias. Update manifests before upgrading. Installations with stored bindings need a coordinated migration so the new CRD and the rewritten binding objects are in place before the new controller starts; the old field is not used as the tunnel origin.
 
 The binding's `controller` must match both the running manager's `controllerClass` and its referenced provider's `controller`. A mismatch prevents reconciliation. For resources created before this field existed, install the new CRDs first while the old controller is still running, explicitly patch matching `spec.controller` values onto every provider and binding, and only then roll out the new controller with that class. Kubernetes does not evaluate the field-scoped immutability transition while the old value is absent, but later changes are rejected. Recreate a resource to change its class after migration.
@@ -101,7 +105,7 @@ Binding status records the tunnel ID and CNAME, published hostnames, exact DNS r
 - `Accepted`: configuration and exclusive ownership are valid.
 - `Programmed`: the remote tunnel configuration matches eligible hostnames.
 - `ConnectorReady`: every desired cloudflared replica is available.
-- `DNSAutomationReady`: an owned `DNSEndpoint` exists; without the CRD, the condition reports `ManualConfigurationRequired`.
-- `Ready`: tunnel programming, connector availability, and managed DNS are all ready.
+- `DNSAutomationReady`: an owned `DNSEndpoint` exists, or automation was intentionally disabled; when enabled without the CRD, the condition reports `ManualConfigurationRequired`.
+- `Ready`: tunnel programming and connector availability are ready, together with managed DNS when DNS automation is enabled.
 
 Run `kubectl -n <namespace> get cloudflaretunnelbinding <name> -o yaml` when diagnosing a binding. The condition reason and message explain the current gate.

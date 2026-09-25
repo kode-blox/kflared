@@ -18,4 +18,5 @@ spec:
     namespace: traefik
     port: cloudflare
   connectorReplicas: 2
+  dnsAutomationEnabled: true
   deletionPolicy: Delete

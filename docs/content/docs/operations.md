@@ -13,13 +13,13 @@ kubectl -n my-app get cloudflaretunnelbindings
 kubectl -n my-app get cloudflaretunnelbinding public -o yaml
 ```
 
-A healthy provider reports `Accepted=True` and `CredentialsValid=True`. A fully automated binding reports all five conditions as true: `Accepted`, `Programmed`, `ConnectorReady`, `DNSAutomationReady`, and `Ready`.
+A healthy provider reports `Accepted=True` and `CredentialsValid=True`. A healthy binding reports all five conditions as true: `Accepted`, `Programmed`, `ConnectorReady`, `DNSAutomationReady`, and `Ready`. `DNSAutomationReady=True` can mean either that the owned `DNSEndpoint` exists or that DNS automation was intentionally disabled.
 
-The binding's `status.resources` lists the connector Deployment, PodDisruptionBudget, token Secret, and optional `DNSEndpoint` names without exposing credentials. `status.publishedHostnames` and `status.dnsRecords` show the exact public contract currently derived from accepted HTTPRoutes.
+The binding's `status.resources` lists the connector Deployment, PodDisruptionBudget, token Secret, and optional `DNSEndpoint` names without exposing credentials. `status.publishedHostnames` shows the hostnames programmed into the tunnel. When DNS automation is enabled, `status.dnsRecords` shows the exact public DNS contract derived from those HTTPRoutes.
 
 ## DNS modes
 
-When the ExternalDNS `DNSEndpoint` CRD is discoverable, KFlared owns a `DNSEndpoint` containing Cloudflare-proxied CNAMEs to `<tunnel-id>.cfargotunnel.com`. ExternalDNS remains responsible for applying those records.
+`spec.dnsAutomationEnabled` defaults to `true`. When enabled and the ExternalDNS `DNSEndpoint` CRD is discoverable, KFlared owns a `DNSEndpoint` containing Cloudflare-proxied CNAMEs to `<tunnel-id>.cfargotunnel.com`. ExternalDNS remains responsible for applying those records.
 
 Without the CRD, KFlared reports every required CNAME in `status.dnsRecords` and sets:
 
@@ -29,6 +29,8 @@ Reason=ManualConfigurationRequired
 ```
 
 Apply those records with your DNS management system. The MVP cannot acknowledge or verify manual DNS, so `Ready` remains false even when traffic works.
+
+Set `spec.dnsAutomationEnabled: false` when the public hostname must retain another DNS target. KFlared removes any binding-owned `DNSEndpoint`, clears `status.dnsRecords` and `status.resources.dnsEndpoint`, and reports `DNSAutomationReady=True` with reason `DNSAutomationDisabled`. Tunnel ingress and connectors continue to reconcile, so `Ready` can become true without managed public DNS. This mode is suitable when another Cloudflare edge component, such as a Worker using Workers VPC, reaches the tunnel while public DNS points elsewhere.
 
 ## Route eligibility
 

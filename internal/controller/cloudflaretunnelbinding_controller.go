@@ -177,15 +177,20 @@ func (r *CloudflareTunnelBindingReconciler) Reconcile(ctx context.Context, req c
 	}
 
 	tunnelCNAME := tunnel.ID + "." + tunnelCNAMEZone
-	dnsAutomated, err := r.reconcileDNSEndpoint(ctx, binding, resourceName, hostnames, tunnelCNAME)
+	dnsAutomationEnabled := bindingDNSAutomationEnabled(binding)
+	dnsAutomated, err := r.reconcileDNSEndpoint(ctx, binding, resourceName, hostnames, tunnelCNAME, dnsAutomationEnabled)
 	if err != nil {
 		return ctrl.Result{}, r.reportOperationalFailure(ctx, binding, kflaredv1alpha1.BindingConditionDNSAutomationReady, "DNSReconciliationFailed", "DNS automation reconciliation could not complete", err)
 	}
 	connectorReady := deployment.Status.AvailableReplicas >= effectiveReplicas(binding.Spec.ConnectorReplicas)
-	if err := r.setReadyStatus(ctx, binding, tunnel, tunnelCNAME, resourceName, hostnames, connectorReady, dnsAutomated); err != nil {
+	if err := r.setReadyStatus(ctx, binding, tunnel, tunnelCNAME, resourceName, hostnames, connectorReady, dnsAutomationEnabled, dnsAutomated); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: 2 * time.Minute}, nil
+}
+
+func bindingDNSAutomationEnabled(binding *kflaredv1alpha1.CloudflareTunnelBinding) bool {
+	return binding.Spec.DNSAutomationEnabled == nil || *binding.Spec.DNSAutomationEnabled
 }
 
 func (r *CloudflareTunnelBindingReconciler) validateAndPlan(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding) (*kflaredv1alpha1.ClusterCloudflareProvider, []string, string, *ctrl.Result, error) {
@@ -441,7 +446,10 @@ func (r *CloudflareTunnelBindingReconciler) reconcilePodDisruptionBudget(ctx con
 	return err
 }
 
-func (r *CloudflareTunnelBindingReconciler) reconcileDNSEndpoint(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding, name string, hostnames []string, target string) (bool, error) {
+func (r *CloudflareTunnelBindingReconciler) reconcileDNSEndpoint(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding, name string, hostnames []string, target string, enabled bool) (bool, error) {
+	if !enabled {
+		return false, r.deleteDNSEndpoint(ctx, binding, name)
+	}
 	if r.RESTMapper == nil {
 		return false, nil
 	}
@@ -485,16 +493,19 @@ func (r *CloudflareTunnelBindingReconciler) reconcileDNSEndpoint(ctx context.Con
 	return err == nil, err
 }
 
-func (r *CloudflareTunnelBindingReconciler) setReadyStatus(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding, tunnel *cfclient.Tunnel, cname, resourceName string, hostnames []string, connectorReady, dnsAutomated bool) error {
+func (r *CloudflareTunnelBindingReconciler) setReadyStatus(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding, tunnel *cfclient.Tunnel, cname, resourceName string, hostnames []string, connectorReady, dnsAutomationEnabled, dnsAutomated bool) error {
 	base := binding.DeepCopy()
 	binding.Status.ObservedGeneration = binding.Generation
 	binding.Status.TunnelID = tunnel.ID
 	binding.Status.TunnelName = tunnel.Name
 	binding.Status.TunnelCNAME = cname
 	binding.Status.PublishedHostnames = slices.Clone(hostnames)
-	binding.Status.DNSRecords = make([]kflaredv1alpha1.DNSRecord, 0, len(hostnames))
-	for _, hostname := range hostnames {
-		binding.Status.DNSRecords = append(binding.Status.DNSRecords, kflaredv1alpha1.DNSRecord{Hostname: hostname, Type: "CNAME", Target: cname})
+	binding.Status.DNSRecords = nil
+	if dnsAutomationEnabled {
+		binding.Status.DNSRecords = make([]kflaredv1alpha1.DNSRecord, 0, len(hostnames))
+		for _, hostname := range hostnames {
+			binding.Status.DNSRecords = append(binding.Status.DNSRecords, kflaredv1alpha1.DNSRecord{Hostname: hostname, Type: "CNAME", Target: cname})
+		}
 	}
 	binding.Status.Resources = kflaredv1alpha1.ConnectorResourceNames{Deployment: resourceName, PodDisruptionBudget: resourceName, Secret: resourceName}
 	setCondition(&binding.Status.Conditions, binding.Generation, kflaredv1alpha1.BindingConditionAccepted, metav1.ConditionTrue, "Accepted", "Binding configuration and ownership are valid")
@@ -508,14 +519,16 @@ func (r *CloudflareTunnelBindingReconciler) setReadyStatus(ctx context.Context, 
 	} else {
 		setCondition(&binding.Status.Conditions, binding.Generation, kflaredv1alpha1.BindingConditionConnectorReady, metav1.ConditionFalse, "ConnectorProgressing", "Waiting for cloudflared connector replicas")
 	}
-	if dnsAutomated {
+	if !dnsAutomationEnabled {
+		setCondition(&binding.Status.Conditions, binding.Generation, kflaredv1alpha1.BindingConditionDNSAutomationReady, metav1.ConditionTrue, "DNSAutomationDisabled", "ExternalDNS DNSEndpoint automation is disabled by spec")
+	} else if dnsAutomated {
 		binding.Status.Resources.DNSEndpoint = resourceName
 		setCondition(&binding.Status.Conditions, binding.Generation, kflaredv1alpha1.BindingConditionDNSAutomationReady, metav1.ConditionTrue, "DNSEndpointCreated", "ExternalDNS automation resource is present")
 	} else {
 		setCondition(&binding.Status.Conditions, binding.Generation, kflaredv1alpha1.BindingConditionDNSAutomationReady, metav1.ConditionFalse, "ManualConfigurationRequired", "Create the CNAME records listed in status.dnsRecords")
 	}
-	if len(hostnames) > 0 && connectorReady && dnsAutomated {
-		setCondition(&binding.Status.Conditions, binding.Generation, kflaredv1alpha1.BindingConditionReady, metav1.ConditionTrue, "Ready", "Tunnel, connectors, and DNS automation are ready")
+	if len(hostnames) > 0 && connectorReady && (dnsAutomated || !dnsAutomationEnabled) {
+		setCondition(&binding.Status.Conditions, binding.Generation, kflaredv1alpha1.BindingConditionReady, metav1.ConditionTrue, "Ready", "Tunnel and connectors are ready")
 	} else {
 		setCondition(&binding.Status.Conditions, binding.Generation, kflaredv1alpha1.BindingConditionReady, metav1.ConditionFalse, "DependenciesNotReady", "Connector availability or DNS automation is incomplete")
 	}

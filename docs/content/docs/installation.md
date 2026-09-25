@@ -33,6 +33,12 @@ helm upgrade --install kflared ./charts \
 
 KFlared CRDs live in Helm's special `crds/` directory. Helm installs them before templates and deliberately does not upgrade or delete them. Use `--skip-crds` only when a cluster administrator manages the CRDs separately.
 
+### Upgrade to per-binding DNS automation control
+
+Before using `spec.dnsAutomationEnabled`, apply the updated CRD from `config/crd/bases/` or synchronize the equivalent CRD-only GitOps source. An ordinary `helm upgrade` does **not** update `charts/crds/`, so it cannot add this field to an existing cluster.
+
+Use ordered rollout phases: first synchronize the CRD, then roll out the controller that understands the field, and only then synchronize bindings that set `dnsAutomationEnabled: false`. Keep these as separate GitOps sync waves (or equivalent ordered releases). An older controller ignores the new field and can continue creating the binding-owned `DNSEndpoint` until its rollout completes.
+
 ### Upgrade from a release without controller classes
 
 Do not roll out the new manager before the stored resources have a class: it will deliberately ignore them. Keep the old manager running and perform these phases in order:

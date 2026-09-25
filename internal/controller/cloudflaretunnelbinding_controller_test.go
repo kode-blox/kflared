@@ -165,6 +165,155 @@ func TestBindingReconcileCreatesIdempotentTunnelAndHardenedConnectors(t *testing
 	assertTestDNSEndpointEndpoints(t, kubeClient, endpointKey, expectedEndpoints)
 }
 
+func TestBindingReconcileDisablesDNSAutomationAndDeletesOwnedDNSEndpoint(t *testing.T) {
+	scheme := bindingTestScheme(t)
+	objects, binding := validBindingObjects()
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.ClusterCloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}, &appsv1.Deployment{}).
+		WithObjects(objects...).Build()
+	cloudflare := &fakeCloudflareClient{token: testConnectorToken}
+	reconciler := &CloudflareTunnelBindingReconciler{ControllerClass: testControllerClass, Client: kubeClient, Scheme: scheme, RESTMapper: bindingTestRESTMapper(), Cloudflare: fakeCloudflareFactory{client: cloudflare}}
+	request := ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}
+
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("add finalizer: %v", err)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("create DNS automation: %v", err)
+	}
+	resourceName := connectorResourceName(binding.UID)
+	endpointKey := types.NamespacedName{Namespace: binding.Namespace, Name: resourceName}
+	getTestDNSEndpoint(t, kubeClient, endpointKey)
+
+	deployment := &appsv1.Deployment{}
+	if err := kubeClient.Get(context.Background(), types.NamespacedName{Namespace: defaultSystemNamespace, Name: resourceName}, deployment); err != nil {
+		t.Fatal(err)
+	}
+	deployment.Status.AvailableReplicas = 2
+	if err := kubeClient.Status().Update(context.Background(), deployment); err != nil {
+		t.Fatalf("mark connectors available: %v", err)
+	}
+	storedBinding := &kflaredv1alpha1.CloudflareTunnelBinding{}
+	if err := kubeClient.Get(context.Background(), request.NamespacedName, storedBinding); err != nil {
+		t.Fatal(err)
+	}
+	storedBinding.Spec.DNSAutomationEnabled = boolPointer(false)
+	if err := kubeClient.Update(context.Background(), storedBinding); err != nil {
+		t.Fatalf("disable DNS automation: %v", err)
+	}
+
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("reconcile DNS automation opt-out: %v", err)
+	}
+	endpoint := &unstructured.Unstructured{}
+	endpoint.SetAPIVersion(dnsEndpointAPIVersion)
+	endpoint.SetKind(dnsEndpointKind)
+	if err := kubeClient.Get(context.Background(), endpointKey, endpoint); !apierrors.IsNotFound(err) {
+		t.Fatalf("DNSEndpoint after opt-out = %v, want not found", err)
+	}
+	if cloudflare.tunnel == nil || cloudflare.deleteCalls != 0 || len(cloudflare.configuration) != 2 {
+		t.Fatalf("DNS opt-out changed tunnel: tunnel=%#v deleteCalls=%d ingressRules=%d", cloudflare.tunnel, cloudflare.deleteCalls, len(cloudflare.configuration))
+	}
+	connectorKey := types.NamespacedName{Namespace: defaultSystemNamespace, Name: resourceName}
+	if err := kubeClient.Get(context.Background(), connectorKey, &appsv1.Deployment{}); err != nil {
+		t.Fatalf("get connector Deployment after DNS opt-out: %v", err)
+	}
+	if err := kubeClient.Get(context.Background(), connectorKey, &policyv1.PodDisruptionBudget{}); err != nil {
+		t.Fatalf("get connector PodDisruptionBudget after DNS opt-out: %v", err)
+	}
+	if err := kubeClient.Get(context.Background(), connectorKey, &corev1.Secret{}); err != nil {
+		t.Fatalf("get connector Secret after DNS opt-out: %v", err)
+	}
+	if err := kubeClient.Get(context.Background(), request.NamespacedName, storedBinding); err != nil {
+		t.Fatal(err)
+	}
+	if len(storedBinding.Status.DNSRecords) != 0 || storedBinding.Status.Resources.DNSEndpoint != "" {
+		t.Fatalf("disabled DNS automation retained DNS status: %#v", storedBinding.Status)
+	}
+	dnsReady := apiMeta.FindStatusCondition(storedBinding.Status.Conditions, kflaredv1alpha1.BindingConditionDNSAutomationReady)
+	if dnsReady == nil || dnsReady.Status != metav1.ConditionTrue || dnsReady.Reason != "DNSAutomationDisabled" {
+		t.Fatalf("DNSAutomationReady = %#v, want True/DNSAutomationDisabled", dnsReady)
+	}
+	ready := apiMeta.FindStatusCondition(storedBinding.Status.Conditions, kflaredv1alpha1.BindingConditionReady)
+	if ready == nil || ready.Status != metav1.ConditionTrue {
+		t.Fatalf("Ready = %#v, want True when connectors are available", ready)
+	}
+}
+
+func TestBindingReconcileDoesNotCreateDNSEndpointWhenDNSAutomationIsDisabled(t *testing.T) {
+	scheme := bindingTestScheme(t)
+	objects, binding := validBindingObjects()
+	binding.Spec.DNSAutomationEnabled = boolPointer(false)
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.ClusterCloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}, &appsv1.Deployment{}).
+		WithObjects(objects...).Build()
+	cloudflare := &fakeCloudflareClient{token: testConnectorToken}
+	reconciler := &CloudflareTunnelBindingReconciler{ControllerClass: testControllerClass, Client: kubeClient, Scheme: scheme, RESTMapper: bindingTestRESTMapper(), Cloudflare: fakeCloudflareFactory{client: cloudflare}}
+	request := ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}
+
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("add finalizer: %v", err)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("reconcile disabled DNS automation: %v", err)
+	}
+	endpoint := &unstructured.Unstructured{}
+	endpoint.SetAPIVersion(dnsEndpointAPIVersion)
+	endpoint.SetKind(dnsEndpointKind)
+	endpointKey := types.NamespacedName{Namespace: binding.Namespace, Name: connectorResourceName(binding.UID)}
+	if err := kubeClient.Get(context.Background(), endpointKey, endpoint); !apierrors.IsNotFound(err) {
+		t.Fatalf("DNSEndpoint for a disabled binding = %v, want not found", err)
+	}
+}
+
+func TestBindingReconcileDefaultsNilDNSAutomationToEnabled(t *testing.T) {
+	scheme := bindingTestScheme(t)
+	objects, binding := validBindingObjects()
+	binding.Spec.DNSAutomationEnabled = nil
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.ClusterCloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}, &appsv1.Deployment{}).
+		WithObjects(objects...).Build()
+	cloudflare := &fakeCloudflareClient{token: testConnectorToken}
+	reconciler := &CloudflareTunnelBindingReconciler{ControllerClass: testControllerClass, Client: kubeClient, Scheme: scheme, RESTMapper: bindingTestRESTMapper(), Cloudflare: fakeCloudflareFactory{client: cloudflare}}
+	request := ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}
+
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("add finalizer: %v", err)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("reconcile nil DNS automation setting: %v", err)
+	}
+	endpointKey := types.NamespacedName{Namespace: binding.Namespace, Name: connectorResourceName(binding.UID)}
+	getTestDNSEndpoint(t, kubeClient, endpointKey)
+}
+
+func TestBindingReconcileRefusesToDeleteUnownedDNSEndpointWhenDNSAutomationIsDisabled(t *testing.T) {
+	scheme := bindingTestScheme(t)
+	objects, binding := validBindingObjects()
+	binding.Spec.DNSAutomationEnabled = boolPointer(false)
+	endpointKey := types.NamespacedName{Namespace: binding.Namespace, Name: connectorResourceName(binding.UID)}
+	endpoint := &unstructured.Unstructured{}
+	endpoint.SetAPIVersion(dnsEndpointAPIVersion)
+	endpoint.SetKind(dnsEndpointKind)
+	endpoint.SetNamespace(endpointKey.Namespace)
+	endpoint.SetName(endpointKey.Name)
+	endpoint.Object["spec"] = map[string]any{"endpoints": []any{}}
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.ClusterCloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}, &appsv1.Deployment{}).
+		WithObjects(append(objects, endpoint)...).Build()
+	cloudflare := &fakeCloudflareClient{token: testConnectorToken}
+	reconciler := &CloudflareTunnelBindingReconciler{ControllerClass: testControllerClass, Client: kubeClient, Scheme: scheme, RESTMapper: bindingTestRESTMapper(), Cloudflare: fakeCloudflareFactory{client: cloudflare}}
+	request := ctrl.Request{Namespace: binding.Namespace, Name: binding.Name}
+
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("add finalizer: %v", err)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), request); err == nil || !strings.Contains(err.Error(), "refusing to delete DNSEndpoint") {
+		t.Fatalf("reconcile disabled DNS automation error = %v, want ownership refusal", err)
+	}
+	getTestDNSEndpoint(t, kubeClient, endpointKey)
+}
+
 func TestBindingReconcileIgnoresOtherControllerClassBeforeDeletionEffects(t *testing.T) {
 	scheme := bindingTestScheme(t)
 	objects, binding := validBindingObjects()
@@ -1328,12 +1477,13 @@ func validBindingObjects() ([]client.Object, *kflaredv1alpha1.CloudflareTunnelBi
 	binding := &kflaredv1alpha1.CloudflareTunnelBinding{
 		Name: "public", Namespace: testTenantName, UID: types.UID("11111111-2222-3333-4444-555555555555"), Generation: 1, CreationTimestamp: metav1.NewTime(time.Unix(100, 0)),
 		Spec: kflaredv1alpha1.CloudflareTunnelBindingSpec{
-			Controller:        testControllerClass,
-			ProviderRef:       kflaredv1alpha1.LocalReference{Name: testDefaultName},
-			GatewayRef:        kflaredv1alpha1.GatewayReference{Name: testGatewayName, SectionName: testHTTPSectionName},
-			OriginServiceRef:  kflaredv1alpha1.OriginServiceReference{Name: testGatewayName, Port: intstr.FromString(testOriginPortName)},
-			ConnectorReplicas: 2,
-			DeletionPolicy:    kflaredv1alpha1.DeletionPolicyDelete,
+			Controller:           testControllerClass,
+			ProviderRef:          kflaredv1alpha1.LocalReference{Name: testDefaultName},
+			GatewayRef:           kflaredv1alpha1.GatewayReference{Name: testGatewayName, SectionName: testHTTPSectionName},
+			OriginServiceRef:     kflaredv1alpha1.OriginServiceReference{Name: testGatewayName, Port: intstr.FromString(testOriginPortName)},
+			ConnectorReplicas:    2,
+			DeletionPolicy:       kflaredv1alpha1.DeletionPolicyDelete,
+			DNSAutomationEnabled: boolPointer(true),
 		},
 	}
 	gateway := &gatewayv1.Gateway{
@@ -1364,4 +1514,8 @@ func validBindingObjects() ([]client.Object, *kflaredv1alpha1.CloudflareTunnelBi
 		&corev1.Service{Name: testGatewayName, Namespace: testTenantName, Spec: corev1.ServiceSpec{ClusterIP: "10.0.0.10", Ports: []corev1.ServicePort{{Name: testOriginPortName, Port: 80}}}},
 		route,
 	}, binding
+}
+
+func boolPointer(value bool) *bool {
+	return &value
 }

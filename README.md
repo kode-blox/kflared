@@ -23,7 +23,7 @@ See the [KFlared documentation](https://kflared.kodeblox.com), [architecture](do
 - one named HTTP listener and concrete, non-wildcard HTTPRoute hostnames
 - binding, Gateway, and HTTPRoutes in the application namespace; an origin Service may be cross-namespace with a matching ReferenceGrant
 - official `cloudflare/cloudflared:2026.8.3`, two or more replicas
-- optional ExternalDNS `DNSEndpoint` automation, with exact manual CNAMEs in status otherwise
+- per-binding ExternalDNS `DNSEndpoint` automation, enabled by default, with an explicit opt-out for externally managed DNS targets
 
 GRPCRoute, wildcard hostnames, HTTPS origins, direct Service backend routing, shared/imported tunnels, externally managed connectors, and native GatewayClass ownership are deferred.
 
@@ -77,7 +77,7 @@ kubectl get clustercloudflareproviders
 kubectl -n my-app get cloudflaretunnelbindings -o yaml
 ```
 
-When the DNSEndpoint CRD is unavailable, `status.dnsRecords` is authoritative and `DNSAutomationReady=False` reports `ManualConfigurationRequired`. The MVP intentionally cannot acknowledge or verify manually managed DNS, so `Ready` remains false.
+`spec.dnsAutomationEnabled` defaults to `true`. When enabled but the DNSEndpoint CRD is unavailable, `status.dnsRecords` is authoritative and `DNSAutomationReady=False` reports `ManualConfigurationRequired`. The MVP intentionally cannot acknowledge or verify manually managed DNS, so `Ready` remains false. Set the field to `false` when the public hostname must retain another DNS target; KFlared then removes any binding-owned `DNSEndpoint`, does not prescribe replacement CNAMEs, and treats the intentional opt-out as ready.
 
 ## Development
 

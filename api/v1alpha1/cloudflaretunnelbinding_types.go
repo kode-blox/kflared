@@ -86,6 +86,12 @@ type CloudflareTunnelBindingSpec struct {
 	// and managed DNSEndpoints are always removed.
 	// +kubebuilder:default=Delete
 	DeletionPolicy DeletionPolicy `json:"deletionPolicy,omitempty"`
+
+	// dnsAutomationEnabled controls whether KFlared creates an ExternalDNS DNSEndpoint
+	// for the accepted HTTPRoute hostnames. Disable it when those hostnames must retain
+	// DNS records managed outside this binding.
+	// +kubebuilder:default=true
+	DNSAutomationEnabled *bool `json:"dnsAutomationEnabled,omitempty"`
 }
 
 // DNSRecord describes an exact DNS record required for a published hostname.
