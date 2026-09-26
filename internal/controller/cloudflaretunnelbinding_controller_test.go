@@ -442,7 +442,7 @@ func TestOriginWatchMappingUsesEffectiveNamespace(t *testing.T) {
 	const originNamespace = testSharedOriginNamespace
 	first.Spec.OriginServiceRef.Namespace = originNamespace
 	second := first.DeepCopy()
-	second.Name = "second"
+	second.Name = testSecondName
 	second.Namespace = "second-tenant"
 	second.UID = types.UID("22222222-3333-4444-5555-666666666666")
 	objects = append(objects, second)
@@ -624,7 +624,7 @@ func TestBindingsInDifferentNamespacesCanShareAuthorizedOrigin(t *testing.T) {
 	firstGrant := originReferenceGrant(first)
 
 	second := first.DeepCopy()
-	second.Name = "second"
+	second.Name = testSecondName
 	second.Namespace = "second-tenant"
 	second.UID = types.UID("22222222-3333-4444-5555-666666666666")
 	secondGateway := &gatewayv1.Gateway{}
@@ -1506,7 +1506,7 @@ func validBindingObjects() ([]client.Object, *kflaredv1alpha1.CloudflareTunnelBi
 	return []client.Object{
 		readyClusterProvider(),
 		binding,
-		&corev1.Namespace{Name: testTenantName, Labels: map[string]string{testTenantName: "allowed"}},
+		&corev1.Namespace{Name: testTenantName, Labels: map[string]string{testTenantName: testAllowedLabelValue}},
 		&corev1.Namespace{Name: metav1.NamespaceSystem, UID: types.UID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")},
 		&corev1.Secret{Name: testAPITokenSecretName, Namespace: defaultSystemNamespace, Data: map[string][]byte{testAPITokenSecretKey: []byte(testAPITokenSecretKey)}},
 		&gatewayv1.GatewayClass{Name: testGatewayName, Spec: gatewayv1.GatewayClassSpec{ControllerName: gatewayv1.GatewayController(traefikControllerName)}},

@@ -21,8 +21,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	kflaredv1alpha1 "github.com/kode-blox/kflared/api/v1alpha1"
-	cfclient "github.com/kode-blox/kflared/internal/cloudflare"
+	"net/netip"
+	"strings"
+	"time"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -32,7 +34,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"net/netip"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -41,8 +42,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
-	"strings"
-	"time"
+
+	kflaredv1alpha1 "github.com/kode-blox/kflared/api/v1alpha1"
+	cfclient "github.com/kode-blox/kflared/internal/cloudflare"
 )
 
 // CloudflareTunnelPrivateRouteReconciler reconciles a CloudflareTunnelPrivateRoute object
@@ -101,7 +103,7 @@ func (r *CloudflareTunnelPrivateRouteReconciler) reconcile(ctx context.Context, 
 		return ctrl.Result{}, err
 	}
 	if reason != "" {
-		if route.Status.Network != "" && reason != "ProviderControllerClassMismatch" {
+		if route.Status.Network != "" && reason != providerControllerClassMismatch {
 			if err := r.removeRoute(ctx, route); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -156,7 +158,7 @@ func (r *CloudflareTunnelPrivateRouteReconciler) validate(ctx context.Context, r
 		return nil, "", "", err
 	}
 	if provider.Spec.Controller != route.Spec.Controller {
-		return nil, "", "ProviderControllerClassMismatch", nil
+		return nil, "", providerControllerClassMismatch, nil
 	}
 	if !conditionTrue(provider.Status.Conditions, provider.Generation, kflaredv1alpha1.ProviderConditionAccepted) || !conditionTrue(provider.Status.Conditions, provider.Generation, kflaredv1alpha1.ProviderConditionCredentialsValid) {
 		return nil, "", "ProviderNotReady", nil
@@ -204,9 +206,20 @@ func (r *CloudflareTunnelPrivateRouteReconciler) validate(ctx context.Context, r
 		return nil, "", "ServicePortNotFound", nil
 	}
 	network := netip.PrefixFrom(ip, 32).String()
+	conflict, err := r.privateRouteConflicts(ctx, route, targetNS, service.Name, network)
+	if err != nil {
+		return nil, "", "", err
+	}
+	if conflict {
+		return nil, "", "RouteConflict", nil
+	}
+	return provider, network, "", nil
+}
+
+func (r *CloudflareTunnelPrivateRouteReconciler) privateRouteConflicts(ctx context.Context, route *kflaredv1alpha1.CloudflareTunnelPrivateRoute, targetNS, serviceName, network string) (bool, error) {
 	routes := &kflaredv1alpha1.CloudflareTunnelPrivateRouteList{}
 	if err := r.List(ctx, routes); err != nil {
-		return nil, "", "", err
+		return false, err
 	}
 	for i := range routes.Items {
 		other := &routes.Items[i]
@@ -214,14 +227,14 @@ func (r *CloudflareTunnelPrivateRouteReconciler) validate(ctx context.Context, r
 			continue
 		}
 		otherNetwork := other.Status.Network
-		if otherNetwork == "" && privateServiceNamespace(other) == targetNS && other.Spec.ServiceRef.Name == service.Name {
+		if otherNetwork == "" && privateServiceNamespace(other) == targetNS && other.Spec.ServiceRef.Name == serviceName {
 			otherNetwork = network
 		}
 		if otherNetwork == network && privatePrecedes(other, route) {
-			return nil, "", "RouteConflict", nil
+			return true, nil
 		}
 	}
-	return provider, network, "", nil
+	return false, nil
 }
 
 func privatePrecedes(a, b *kflaredv1alpha1.CloudflareTunnelPrivateRoute) bool {
@@ -376,7 +389,7 @@ func (r *CloudflareTunnelPrivateRouteReconciler) ensureRoute(ctx context.Context
 		if privateOwned(current, route) && current.TunnelID == tunnel.ID {
 			return r.patchStatus(ctx, route, func() { route.Status.RouteID = current.ID; route.Status.Network = network })
 		}
-		return fmt.Errorf("Cloudflare network %s is already routed by route %s", network, current.ID)
+		return fmt.Errorf("cloudflare network %s is already routed by route %s", network, current.ID)
 	}
 	// Persist the scope before creation. If Cloudflare creates the route but the
 	// following status patch fails, cleanup can still find it by network and UID.
@@ -390,7 +403,7 @@ func (r *CloudflareTunnelPrivateRouteReconciler) ensureRoute(ctx context.Context
 		return err
 	}
 	if created == nil || !privateOwned(created, route) || created.Network != network || created.TunnelID != tunnel.ID {
-		return fmt.Errorf("Cloudflare returned unexpected route identity")
+		return fmt.Errorf("cloudflare returned unexpected route identity")
 	}
 	return r.patchStatus(ctx, route, func() { route.Status.RouteID = created.ID; route.Status.Network = network })
 }
@@ -446,42 +459,42 @@ func (r *CloudflareTunnelPrivateRouteReconciler) removeRoute(ctx context.Context
 func (r *CloudflareTunnelPrivateRouteReconciler) ensureConnector(ctx context.Context, route *kflaredv1alpha1.CloudflareTunnelPrivateRoute, token string) (*appsv1.Deployment, error) {
 	name := privateResourceName(route.UID)
 	namespace := r.systemNamespace()
-	labels := privateLabels(route)
-	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace}}
+	childLabels := privateLabels(route)
+	secret := &corev1.Secret{Name: name, Namespace: namespace}
 	if _, err := controllerutil.CreateOrPatch(ctx, r.Client, secret, func() error {
 		if err := verifyPrivateChild(route, secret); err != nil {
 			return err
 		}
-		secret.Labels = labels
+		secret.Labels = childLabels
 		secret.Type = corev1.SecretTypeOpaque
 		secret.Data = map[string][]byte{"token": []byte(token)}
 		return nil
 	}); err != nil {
 		return nil, err
 	}
-	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace}}
+	deployment := &appsv1.Deployment{Name: name, Namespace: namespace}
 	if _, err := controllerutil.CreateOrPatch(ctx, r.Client, deployment, func() error {
 		if err := verifyPrivateChild(route, deployment); err != nil {
 			return err
 		}
 		replicas := effectiveReplicas(route.Spec.ConnectorReplicas)
-		deployment.Labels = labels
+		deployment.Labels = childLabels
 		deployment.Spec.Replicas = &replicas
-		deployment.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
+		deployment.Spec.Selector = &metav1.LabelSelector{MatchLabels: childLabels}
 		deployment.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RollingUpdateDeploymentStrategyType}
-		deployment.Spec.Template.Labels = labels
+		deployment.Spec.Template.Labels = childLabels
 		deployment.Spec.Template.Spec = connectorPodSpec(name, r.cloudflaredImage())
 		return nil
 	}); err != nil {
 		return nil, err
 	}
-	pdb := &policyv1.PodDisruptionBudget{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace}}
+	pdb := &policyv1.PodDisruptionBudget{Name: name, Namespace: namespace}
 	if _, err := controllerutil.CreateOrPatch(ctx, r.Client, pdb, func() error {
 		if err := verifyPrivateChild(route, pdb); err != nil {
 			return err
 		}
-		pdb.Labels = labels
-		pdb.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
+		pdb.Labels = childLabels
+		pdb.Spec.Selector = &metav1.LabelSelector{MatchLabels: childLabels}
 		pdb.Spec.MaxUnavailable = &intstr.IntOrString{Type: intstr.Int, IntVal: 1}
 		return nil
 	}); err != nil {
@@ -508,7 +521,7 @@ func (r *CloudflareTunnelPrivateRouteReconciler) finalize(ctx context.Context, r
 		}
 	}
 	name := privateResourceName(route.UID)
-	for _, object := range []client.Object{&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.systemNamespace()}}, &policyv1.PodDisruptionBudget{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.systemNamespace()}}, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.systemNamespace()}}} {
+	for _, object := range []client.Object{&appsv1.Deployment{Name: name, Namespace: r.systemNamespace()}, &policyv1.PodDisruptionBudget{Name: name, Namespace: r.systemNamespace()}, &corev1.Secret{Name: name, Namespace: r.systemNamespace()}} {
 		current := object.DeepCopyObject().(client.Object)
 		err := r.Get(ctx, types.NamespacedName{Namespace: object.GetNamespace(), Name: object.GetName()}, current)
 		if apierrors.IsNotFound(err) {
@@ -619,7 +632,7 @@ func (r *CloudflareTunnelPrivateRouteReconciler) routesForObject(ctx context.Con
 			match = route.Namespace == changed.Name
 		}
 		if match {
-			requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: route.Namespace, Name: route.Name}})
+			requests = append(requests, reconcile.Request{Namespace: route.Namespace, Name: route.Name})
 		}
 	}
 	return requests

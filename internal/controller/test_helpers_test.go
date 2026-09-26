@@ -31,6 +31,12 @@ import (
 const (
 	testControllerClass                = "test-class"
 	testDefaultName                    = "default"
+	testSecondName                     = "second"
+	testAllowedLabelValue              = "allowed"
+	testPrivateRouteKind               = "CloudflareTunnelPrivateRoute"
+	testPrivateRouteName               = "api"
+	testPrivateRouteID                 = "route-1"
+	testPrivateRouteNetwork            = "10.43.0.1/32"
 	testGatewayResourceName            = "gateway"
 	testOtherControllerClass           = "other-class"
 	testTenantName                     = "tenant"
@@ -190,7 +196,7 @@ func readyClusterProvider() *kflaredv1alpha1.ClusterCloudflareProvider {
 			AccountID:                "0123456789abcdef0123456789abcdef",
 			APITokenSecretRef:        kflaredv1alpha1.SecretKeyReference{Name: testAPITokenSecretName, Key: testAPITokenSecretKey},
 			AllowedDNSZones:          []string{"example.com"},
-			BindingNamespaceSelector: metav1.LabelSelector{MatchLabels: map[string]string{testTenantName: "allowed"}},
+			BindingNamespaceSelector: metav1.LabelSelector{MatchLabels: map[string]string{testTenantName: testAllowedLabelValue}},
 		},
 		Status: kflaredv1alpha1.ClusterCloudflareProviderStatus{ObservedGeneration: 1, Conditions: []metav1.Condition{
 			currentCondition(kflaredv1alpha1.ProviderConditionAccepted),

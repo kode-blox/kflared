@@ -53,18 +53,19 @@ import (
 )
 
 const (
-	bindingFinalizer          = "kflared.kodeblox.com/tunnel-cleanup"
-	traefikControllerName     = "traefik.io/gateway-controller"
-	defaultCloudflaredImage   = "cloudflare/cloudflared:2026.8.3"
-	ownerUIDLabel             = "kflared.kodeblox.com/binding-uid"
-	managedByLabel            = "app.kubernetes.io/managed-by"
-	managedByValue            = "kflared"
-	dnsEndpointAPIVersion     = "externaldns.k8s.io/v1alpha1"
-	dnsEndpointKind           = "DNSEndpoint"
-	cloudflareProxiedProperty = "cloudflare/proxied"
-	tunnelCNAMEZone           = "cfargotunnel.com"
-	defaultConnectorReplicas  = int32(2)
-	maxConnectorReplicas      = int32(10)
+	bindingFinalizer                = "kflared.kodeblox.com/tunnel-cleanup"
+	traefikControllerName           = "traefik.io/gateway-controller"
+	defaultCloudflaredImage         = "cloudflare/cloudflared:2026.8.3"
+	ownerUIDLabel                   = "kflared.kodeblox.com/binding-uid"
+	managedByLabel                  = "app.kubernetes.io/managed-by"
+	managedByValue                  = "kflared"
+	dnsEndpointAPIVersion           = "externaldns.k8s.io/v1alpha1"
+	dnsEndpointKind                 = "DNSEndpoint"
+	cloudflareProxiedProperty       = "cloudflare/proxied"
+	tunnelCNAMEZone                 = "cfargotunnel.com"
+	defaultConnectorReplicas        = int32(2)
+	maxConnectorReplicas            = int32(10)
+	providerControllerClassMismatch = "ProviderControllerClassMismatch"
 )
 
 var errClusterProviderStatusUnknown = errors.New("ClusterCloudflareProvider status is not currently known")
@@ -105,7 +106,7 @@ func (r *CloudflareTunnelBindingReconciler) Reconcile(ctx context.Context, req c
 	provider, hostnames, origin, result, err := r.validateAndPlan(ctx, binding)
 	if err != nil || result != nil {
 		if result != nil {
-			if accepted := apiMeta.FindStatusCondition(binding.Status.Conditions, kflaredv1alpha1.BindingConditionAccepted); accepted != nil && accepted.Reason == "ProviderControllerClassMismatch" {
+			if accepted := apiMeta.FindStatusCondition(binding.Status.Conditions, kflaredv1alpha1.BindingConditionAccepted); accepted != nil && accepted.Reason == providerControllerClassMismatch {
 				return *result, err
 			}
 			if binding.Status.TunnelID != "" {
@@ -233,7 +234,7 @@ func (r *CloudflareTunnelBindingReconciler) validateClusterProvider(ctx context.
 		return nil, result, rejectErr
 	}
 	if provider.Spec.Controller != binding.Spec.Controller {
-		_, _, _, result, rejectErr := r.rejected(ctx, binding, "ProviderControllerClassMismatch", "The referenced ClusterCloudflareProvider belongs to a different controller class", nil)
+		_, _, _, result, rejectErr := r.rejected(ctx, binding, providerControllerClassMismatch, "The referenced ClusterCloudflareProvider belongs to a different controller class", nil)
 		return nil, result, rejectErr
 	}
 	accepted := apiMeta.FindStatusCondition(provider.Status.Conditions, kflaredv1alpha1.ProviderConditionAccepted)

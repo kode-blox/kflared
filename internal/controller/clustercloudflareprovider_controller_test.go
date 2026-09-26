@@ -133,14 +133,14 @@ func TestProviderFinalizationWaitsForPrivateRoute(t *testing.T) {
 	provider.Finalizers = []string{clusterProviderFinalizer}
 	provider.DeletionTimestamp = &metav1.Time{Time: time.Now()}
 	privateRoute := &kflaredv1alpha1.CloudflareTunnelPrivateRoute{}
-	privateRoute.Name = "api"
+	privateRoute.Name = testPrivateRouteName
 	privateRoute.Namespace = testTenantName
 	privateRoute.Spec.Controller = testControllerClass
 	privateRoute.Spec.ProviderRef.Name = provider.Name
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(provider, privateRoute).Build()
 	reconciler := &ClusterCloudflareProviderReconciler{ControllerClass: testControllerClass, Client: kubeClient, Scheme: scheme}
 
-	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{Name: provider.Name}); err == nil || !strings.Contains(err.Error(), "CloudflareTunnelPrivateRoute") {
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{Name: provider.Name}); err == nil || !strings.Contains(err.Error(), testPrivateRouteKind) {
 		t.Fatalf("expected private route to block provider deletion, got %v", err)
 	}
 	actual := &kflaredv1alpha1.ClusterCloudflareProvider{}

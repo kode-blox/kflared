@@ -19,10 +19,12 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
+const testKubernetesServiceName = "kubernetes"
+
 func TestPrivateGrantPermits(t *testing.T) {
-	route := &kflaredv1alpha1.CloudflareTunnelPrivateRoute{ObjectMeta: metav1.ObjectMeta{Namespace: "tenant"}, Spec: kflaredv1alpha1.CloudflareTunnelPrivateRouteSpec{ServiceRef: kflaredv1alpha1.PrivateRouteServiceReference{Name: "kubernetes", Namespace: "default"}}}
-	service := gatewayv1.ObjectName("kubernetes")
-	grant := &gatewayv1.ReferenceGrant{Spec: gatewayv1.ReferenceGrantSpec{From: []gatewayv1.ReferenceGrantFrom{{Group: gatewayv1.Group(kflaredv1alpha1.GroupVersion.Group), Kind: "CloudflareTunnelPrivateRoute", Namespace: "tenant"}}, To: []gatewayv1.ReferenceGrantTo{{Group: "", Kind: "Service", Name: &service}}}}
+	route := &kflaredv1alpha1.CloudflareTunnelPrivateRoute{Namespace: testTenantName, Spec: kflaredv1alpha1.CloudflareTunnelPrivateRouteSpec{ServiceRef: kflaredv1alpha1.PrivateRouteServiceReference{Name: testKubernetesServiceName, Namespace: testDefaultName}}}
+	service := gatewayv1.ObjectName(testKubernetesServiceName)
+	grant := &gatewayv1.ReferenceGrant{Spec: gatewayv1.ReferenceGrantSpec{From: []gatewayv1.ReferenceGrantFrom{{Group: gatewayv1.Group(kflaredv1alpha1.GroupVersion.Group), Kind: testPrivateRouteKind, Namespace: testTenantName}}, To: []gatewayv1.ReferenceGrantTo{{Group: "", Kind: "Service", Name: &service}}}}
 	if !privateGrantPermits(grant, route) {
 		t.Fatal("expected exact grant")
 	}
@@ -30,7 +32,7 @@ func TestPrivateGrantPermits(t *testing.T) {
 	if privateGrantPermits(grant, route) {
 		t.Fatal("binding grant must not authorize a private route")
 	}
-	grant.Spec.From[0].Kind = "CloudflareTunnelPrivateRoute"
+	grant.Spec.From[0].Kind = testPrivateRouteKind
 	grant.Spec.From[0].Namespace = "other"
 	if privateGrantPermits(grant, route) {
 		t.Fatal("different source namespace must not be authorized")
@@ -39,9 +41,9 @@ func TestPrivateGrantPermits(t *testing.T) {
 
 func TestPrivateRouteIdentity(t *testing.T) {
 	uid := types.UID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-	route := &kflaredv1alpha1.CloudflareTunnelPrivateRoute{ObjectMeta: metav1.ObjectMeta{UID: uid}}
+	route := &kflaredv1alpha1.CloudflareTunnelPrivateRoute{UID: uid}
 	route.Status.TunnelID = "tunnel-1"
-	current := &cfclient.PrivateRoute{ID: "route-1", TunnelID: "tunnel-1", Comment: privateComment(route)}
+	current := &cfclient.PrivateRoute{ID: testPrivateRouteID, TunnelID: "tunnel-1", Comment: privateComment(route)}
 	if !privateOwned(current, route) {
 		t.Fatal("expected UID-tagged route ownership")
 	}
@@ -63,10 +65,10 @@ func TestPrivateRouteIdentity(t *testing.T) {
 
 func TestPrivateRoutePrecedence(t *testing.T) {
 	now := metav1.NewTime(time.Now())
-	older := &kflaredv1alpha1.CloudflareTunnelPrivateRoute{ObjectMeta: metav1.ObjectMeta{Name: "z", Namespace: "tenant", UID: "first", CreationTimestamp: now}}
+	older := &kflaredv1alpha1.CloudflareTunnelPrivateRoute{Name: "z", Namespace: testTenantName, UID: "first", CreationTimestamp: now}
 	later := older.DeepCopy()
 	later.Name = "a"
-	later.UID = "second"
+	later.UID = testSecondName
 	later.CreationTimestamp = metav1.NewTime(now.Add(time.Minute))
 	if !privatePrecedes(older, later) || privatePrecedes(later, older) {
 		t.Fatal("older object must win regardless of name")
@@ -88,21 +90,21 @@ func TestPrivateRouteReconcileServiceIPAndGrantRemoval(t *testing.T) {
 	ctx := context.Background()
 	scheme := bindingTestScheme(t)
 	provider := readyClusterProvider()
-	route := &kflaredv1alpha1.CloudflareTunnelPrivateRoute{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: testTenantName, UID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", Generation: 1}, Spec: kflaredv1alpha1.CloudflareTunnelPrivateRouteSpec{Controller: testControllerClass, ProviderRef: kflaredv1alpha1.LocalReference{Name: provider.Name}, ServiceRef: kflaredv1alpha1.PrivateRouteServiceReference{Name: "kubernetes", Namespace: "default", Port: intstr.FromInt32(443)}}}
-	name := gatewayv1.ObjectName("kubernetes")
-	grant := &gatewayv1.ReferenceGrant{ObjectMeta: metav1.ObjectMeta{Name: "allow-api", Namespace: "default"}, Spec: gatewayv1.ReferenceGrantSpec{From: []gatewayv1.ReferenceGrantFrom{{Group: gatewayv1.Group(kflaredv1alpha1.GroupVersion.Group), Kind: "CloudflareTunnelPrivateRoute", Namespace: gatewayv1.Namespace(testTenantName)}}, To: []gatewayv1.ReferenceGrantTo{{Group: "", Kind: "Service", Name: &name}}}}
-	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "kubernetes", Namespace: "default"}, Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, ClusterIP: "10.43.0.1", Ports: []corev1.ServicePort{{Port: 443}}}}
-	objects := []client.Object{provider, route, grant, service, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testTenantName, Labels: map[string]string{testTenantName: "allowed"}}}, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: metav1.NamespaceSystem, UID: "11111111-2222-3333-4444-555555555555"}}, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: defaultSystemNamespace}}, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: testAPITokenSecretName, Namespace: defaultSystemNamespace}, Data: map[string][]byte{testAPITokenSecretKey: []byte("api-token")}}}
+	route := &kflaredv1alpha1.CloudflareTunnelPrivateRoute{Name: testPrivateRouteName, Namespace: testTenantName, UID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", Generation: 1, Spec: kflaredv1alpha1.CloudflareTunnelPrivateRouteSpec{Controller: testControllerClass, ProviderRef: kflaredv1alpha1.LocalReference{Name: provider.Name}, ServiceRef: kflaredv1alpha1.PrivateRouteServiceReference{Name: testKubernetesServiceName, Namespace: testDefaultName, Port: intstr.FromInt32(443)}}}
+	name := gatewayv1.ObjectName(testKubernetesServiceName)
+	grant := &gatewayv1.ReferenceGrant{Name: "allow-api", Namespace: testDefaultName, Spec: gatewayv1.ReferenceGrantSpec{From: []gatewayv1.ReferenceGrantFrom{{Group: gatewayv1.Group(kflaredv1alpha1.GroupVersion.Group), Kind: testPrivateRouteKind, Namespace: gatewayv1.Namespace(testTenantName)}}, To: []gatewayv1.ReferenceGrantTo{{Group: "", Kind: "Service", Name: &name}}}}
+	service := &corev1.Service{Name: testKubernetesServiceName, Namespace: testDefaultName, Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, ClusterIP: "10.43.0.1", Ports: []corev1.ServicePort{{Port: 443}}}}
+	objects := []client.Object{provider, route, grant, service, &corev1.Namespace{Name: testTenantName, Labels: map[string]string{testTenantName: testAllowedLabelValue}}, &corev1.Namespace{Name: metav1.NamespaceSystem, UID: "11111111-2222-3333-4444-555555555555"}, &corev1.Namespace{Name: defaultSystemNamespace}, &corev1.Secret{Name: testAPITokenSecretName, Namespace: defaultSystemNamespace, Data: map[string][]byte{testAPITokenSecretKey: []byte("api-token")}}}
 	kube := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelPrivateRoute{}, &kflaredv1alpha1.ClusterCloudflareProvider{}, &appsv1.Deployment{}).WithObjects(objects...).Build()
 	cloudflare := &fakeCloudflareClient{token: testConnectorToken}
 	r := &CloudflareTunnelPrivateRouteReconciler{Client: kube, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: cloudflare}, ControllerClass: testControllerClass}
-	req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: route.Namespace, Name: route.Name}}
-	for i := 0; i < 3; i++ {
+	req := ctrl.Request{Namespace: route.Namespace, Name: route.Name}
+	for i := range 3 {
 		if _, err := r.Reconcile(ctx, req); err != nil {
 			t.Fatalf("initial reconcile %d: %v", i, err)
 		}
 	}
-	if cloudflare.createRouteCalls != 1 || len(cloudflare.privateRoutes) != 1 || cloudflare.privateRoutes[0].Network != "10.43.0.1/32" {
+	if cloudflare.createRouteCalls != 1 || len(cloudflare.privateRoutes) != 1 || cloudflare.privateRoutes[0].Network != testPrivateRouteNetwork {
 		t.Fatalf("initial routes: %#v", cloudflare.privateRoutes)
 	}
 	loser := route.DeepCopy()
@@ -148,6 +150,32 @@ func TestPrivateRouteReconcileServiceIPAndGrantRemoval(t *testing.T) {
 	if conditionTrue(actualRoute.Status.Conditions, actualRoute.Generation, kflaredv1alpha1.PrivateRouteConditionConnectorReady) {
 		t.Fatal("stale available replicas must not mark the new connector rollout ready")
 	}
+	verifyPrivateRouteTransitions(t, privateRouteTestState{
+		ctx: ctx, kube: kube, reconciler: r, route: route, service: service,
+		grant: grant, cloudflare: cloudflare, loser: loser,
+		request: req, loserRequest: loserRequest,
+	})
+}
+
+type privateRouteTestState struct {
+	ctx          context.Context
+	kube         client.Client
+	reconciler   *CloudflareTunnelPrivateRouteReconciler
+	route        *kflaredv1alpha1.CloudflareTunnelPrivateRoute
+	service      *corev1.Service
+	grant        *gatewayv1.ReferenceGrant
+	cloudflare   *fakeCloudflareClient
+	loser        *kflaredv1alpha1.CloudflareTunnelPrivateRoute
+	request      ctrl.Request
+	loserRequest ctrl.Request
+}
+
+func verifyPrivateRouteTransitions(t *testing.T, state privateRouteTestState) {
+	t.Helper()
+	ctx, kube, r := state.ctx, state.kube, state.reconciler
+	route, service, grant := state.route, state.service, state.grant
+	cloudflare, loser := state.cloudflare, state.loser
+	req, loserRequest := state.request, state.loserRequest
 	if err := kube.Get(ctx, client.ObjectKeyFromObject(service), service); err != nil {
 		t.Fatal(err)
 	}
@@ -185,6 +213,7 @@ func TestPrivateRouteReconcileServiceIPAndGrantRemoval(t *testing.T) {
 	if cloudflare.createCalls != 2 || cloudflare.createRouteCalls != 4 || cloudflare.deleteRouteCalls != 3 || len(cloudflare.privateRoutes) != 1 {
 		t.Fatalf("remote tunnel recovery did not replace the stale route: tunnels=%d createdRoutes=%d deletedRoutes=%d routes=%#v", cloudflare.createCalls, cloudflare.createRouteCalls, cloudflare.deleteRouteCalls, cloudflare.privateRoutes)
 	}
+	actualRoute := &kflaredv1alpha1.CloudflareTunnelPrivateRoute{}
 	if err := kube.Get(ctx, client.ObjectKeyFromObject(route), actualRoute); err != nil {
 		t.Fatal(err)
 	}
@@ -209,13 +238,13 @@ func TestPrivateRouteRetainRemovesConnectorButPreservesCloudflareState(t *testin
 	ctx := context.Background()
 	scheme := bindingTestScheme(t)
 	route := &kflaredv1alpha1.CloudflareTunnelPrivateRoute{
-		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: testTenantName, UID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", Finalizers: []string{privateFinalizer}, DeletionTimestamp: &metav1.Time{Time: time.Now()}},
-		Spec:       kflaredv1alpha1.CloudflareTunnelPrivateRouteSpec{Controller: testControllerClass, DeletionPolicy: kflaredv1alpha1.DeletionPolicyRetain},
-		Status:     kflaredv1alpha1.CloudflareTunnelPrivateRouteStatus{TunnelID: testTunnelID, RouteID: "route-1", Network: "10.43.0.1/32"},
+		Name: testPrivateRouteName, Namespace: testTenantName, UID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", Finalizers: []string{privateFinalizer}, DeletionTimestamp: &metav1.Time{Time: time.Now()},
+		Spec:   kflaredv1alpha1.CloudflareTunnelPrivateRouteSpec{Controller: testControllerClass, DeletionPolicy: kflaredv1alpha1.DeletionPolicyRetain},
+		Status: kflaredv1alpha1.CloudflareTunnelPrivateRouteStatus{TunnelID: testTunnelID, RouteID: testPrivateRouteID, Network: testPrivateRouteNetwork},
 	}
-	child := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: privateResourceName(route.UID), Namespace: defaultSystemNamespace, UID: "child-uid", Labels: privateLabels(route)}}
+	child := &corev1.Secret{Name: privateResourceName(route.UID), Namespace: defaultSystemNamespace, UID: "child-uid", Labels: privateLabels(route)}
 	kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(route, child).Build()
-	cloudflare := &fakeCloudflareClient{tunnel: &cfclient.Tunnel{ID: testTunnelID, Name: "existing"}, privateRoutes: []cfclient.PrivateRoute{{ID: "route-1", Network: "10.43.0.1/32", TunnelID: testTunnelID, Comment: privateComment(route)}}}
+	cloudflare := &fakeCloudflareClient{tunnel: &cfclient.Tunnel{ID: testTunnelID, Name: "existing"}, privateRoutes: []cfclient.PrivateRoute{{ID: testPrivateRouteID, Network: testPrivateRouteNetwork, TunnelID: testTunnelID, Comment: privateComment(route)}}}
 	r := &CloudflareTunnelPrivateRouteReconciler{Client: kube, Scheme: scheme, Cloudflare: fakeCloudflareFactory{client: cloudflare}, ControllerClass: testControllerClass}
 	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(route)}); err != nil {
 		t.Fatalf("finalize retained private route: %v", err)
