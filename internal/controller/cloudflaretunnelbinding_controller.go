@@ -26,7 +26,6 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -63,7 +62,7 @@ const (
 	dnsEndpointKind                 = "DNSEndpoint"
 	cloudflareProxiedProperty       = "cloudflare/proxied"
 	tunnelCNAMEZone                 = "cfargotunnel.com"
-	defaultConnectorReplicas        = int32(2)
+	defaultConnectorReplicas        = int32(1)
 	maxConnectorReplicas            = int32(10)
 	providerControllerClassMismatch = "ProviderControllerClassMismatch"
 )
@@ -173,10 +172,6 @@ func (r *CloudflareTunnelBindingReconciler) Reconcile(ctx context.Context, req c
 	if err != nil {
 		return ctrl.Result{}, r.reportOperationalFailure(ctx, binding, kflaredv1alpha1.BindingConditionConnectorReady, "ConnectorReconciliationFailed", "Connector reconciliation could not complete", err)
 	}
-	if err := r.reconcilePodDisruptionBudget(ctx, binding, resourceName); err != nil {
-		return ctrl.Result{}, r.reportOperationalFailure(ctx, binding, kflaredv1alpha1.BindingConditionConnectorReady, "ConnectorReconciliationFailed", "Connector reconciliation could not complete", err)
-	}
-
 	tunnelCNAME := tunnel.ID + "." + tunnelCNAMEZone
 	dnsAutomationEnabled := bindingDNSAutomationEnabled(binding)
 	dnsAutomated, err := r.reconcileDNSEndpoint(ctx, binding, resourceName, hostnames, tunnelCNAME, dnsAutomationEnabled)
@@ -432,21 +427,6 @@ func (r *CloudflareTunnelBindingReconciler) reconcileConnectorDeployment(ctx con
 	return deployment, err
 }
 
-func (r *CloudflareTunnelBindingReconciler) reconcilePodDisruptionBudget(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding, name string) error {
-	pdb := &policyv1.PodDisruptionBudget{Name: name, Namespace: r.systemNamespace()}
-	_, err := controllerutil.CreateOrPatch(ctx, r.Client, pdb, func() error {
-		if err := verifyChildOwnership(binding, pdb); err != nil {
-			return err
-		}
-		resourceLabels := managedLabels(binding)
-		pdb.Labels = resourceLabels
-		pdb.Spec.Selector = &metav1.LabelSelector{MatchLabels: resourceLabels}
-		pdb.Spec.MaxUnavailable = &intstr.IntOrString{Type: intstr.Int, IntVal: 1}
-		return nil
-	})
-	return err
-}
-
 func (r *CloudflareTunnelBindingReconciler) reconcileDNSEndpoint(ctx context.Context, binding *kflaredv1alpha1.CloudflareTunnelBinding, name string, hostnames []string, target string, enabled bool) (bool, error) {
 	if !enabled {
 		return false, r.deleteDNSEndpoint(ctx, binding, name)
@@ -508,7 +488,7 @@ func (r *CloudflareTunnelBindingReconciler) setReadyStatus(ctx context.Context, 
 			binding.Status.DNSRecords = append(binding.Status.DNSRecords, kflaredv1alpha1.DNSRecord{Hostname: hostname, Type: "CNAME", Target: cname})
 		}
 	}
-	binding.Status.Resources = kflaredv1alpha1.ConnectorResourceNames{Deployment: resourceName, PodDisruptionBudget: resourceName, Secret: resourceName}
+	binding.Status.Resources = kflaredv1alpha1.ConnectorResourceNames{Deployment: resourceName, Secret: resourceName}
 	setCondition(&binding.Status.Conditions, binding.Generation, kflaredv1alpha1.BindingConditionAccepted, metav1.ConditionTrue, "Accepted", "Binding configuration and ownership are valid")
 	if len(hostnames) > 0 {
 		setCondition(&binding.Status.Conditions, binding.Generation, kflaredv1alpha1.BindingConditionProgrammed, metav1.ConditionTrue, "Programmed", "Cloudflare Tunnel configuration matches accepted HTTPRoute hostnames")
@@ -610,7 +590,6 @@ func (r *CloudflareTunnelBindingReconciler) finalize(ctx context.Context, bindin
 	name := connectorResourceName(binding.UID)
 	objects := []client.Object{
 		&appsv1.Deployment{Name: name, Namespace: r.systemNamespace()},
-		&policyv1.PodDisruptionBudget{Name: name, Namespace: r.systemNamespace()},
 		&corev1.Secret{Name: name, Namespace: r.systemNamespace()},
 	}
 	for _, object := range objects {

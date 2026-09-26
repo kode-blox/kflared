@@ -51,10 +51,10 @@ spec:
               IPv4 route.
             properties:
               connectorReplicas:
-                default: 2
+                default: 1
                 format: int32
                 maximum: 10
-                minimum: 2
+                minimum: 1
                 type: integer
               controller:
                 minLength: 1
@@ -185,8 +185,6 @@ spec:
                   deployment:
                     type: string
                   dnsEndpoint:
-                    type: string
-                  podDisruptionBudget:
                     type: string
                   secret:
                     type: string

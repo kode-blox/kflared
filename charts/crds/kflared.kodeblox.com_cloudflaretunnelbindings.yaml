@@ -53,12 +53,12 @@ spec:
             description: CloudflareTunnelBindingSpec defines the desired tunnel integration.
             properties:
               connectorReplicas:
-                default: 2
+                default: 1
                 description: connectorReplicas controls the number of official cloudflared
                   connectors.
                 format: int32
                 maximum: 10
-                minimum: 2
+                minimum: 1
                 type: integer
               controller:
                 description: controller identifies the KFlared controller class that
@@ -241,8 +241,6 @@ spec:
                   deployment:
                     type: string
                   dnsEndpoint:
-                    type: string
-                  podDisruptionBudget:
                     type: string
                   secret:
                     type: string

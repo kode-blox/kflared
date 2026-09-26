@@ -6,7 +6,7 @@ description: Run KFlared's unit, controller, envtest, chart, and Kind test layer
 ## Test layers
 
 1. Planner unit tests cover hostname normalization and deterministic tunnel naming.
-2. Controller tests use fake Kubernetes and Cloudflare clients to cover provider credential validation, idempotent tunnel and hardened connector creation, deprogramming after eligibility loss, and the minimum connector replica count.
+2. Controller tests use fake Kubernetes and Cloudflare clients to cover provider credential validation, idempotent tunnel and hardened connector creation, deprogramming after eligibility loss, and single connector operation.
 3. A chart synchronization test verifies that Helm CRDs exactly match the generated Kustomize CRDs.
 4. Envtest verifies API defaults and immutable ownership fields against the generated KFlared and Gateway API CRDs. On Windows this test is skipped because controller-runtime cannot reliably terminate envtest control-plane processes; CI runs it on Linux.
 5. The Kubebuilder-scaffolded Kind E2E suite verifies that the manager starts under the restricted Pod Security profile and serves authenticated metrics. It does not yet exercise reconciliation with Traefik, ExternalDNS, or the live Cloudflare API.

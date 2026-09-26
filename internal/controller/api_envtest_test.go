@@ -439,6 +439,12 @@ func TestCRDDefaultsAndImmutableOwnershipFields(t *testing.T) {
 	if err := kubeClient.Create(ctx, tooManyReplicas); err == nil {
 		t.Fatal("connectorReplicas above ten unexpectedly passed CRD validation")
 	}
+	singleReplica := tooManyReplicas.DeepCopy()
+	singleReplica.Name = "single-replica"
+	singleReplica.Spec.ConnectorReplicas = 1
+	if err := kubeClient.Create(ctx, singleReplica); err != nil {
+		t.Fatalf("connectorReplicas of one unexpectedly failed CRD validation: %v", err)
+	}
 	invalidOriginNamespace := tooManyReplicas.DeepCopy()
 	invalidOriginNamespace.Name = "invalid-origin-namespace"
 	invalidOriginNamespace.Spec.ConnectorReplicas = 2
@@ -468,7 +474,7 @@ func TestCRDDefaultsAndImmutableOwnershipFields(t *testing.T) {
 	if err := kubeClient.Get(ctx, client.ObjectKeyFromObject(binding), actual); err != nil {
 		t.Fatal(err)
 	}
-	if actual.Spec.ConnectorReplicas != 2 || actual.Spec.DeletionPolicy != kflaredv1alpha1.DeletionPolicyDelete || actual.Spec.DNSAutomationEnabled == nil || !*actual.Spec.DNSAutomationEnabled {
+	if actual.Spec.ConnectorReplicas != 1 || actual.Spec.DeletionPolicy != kflaredv1alpha1.DeletionPolicyDelete || actual.Spec.DNSAutomationEnabled == nil || !*actual.Spec.DNSAutomationEnabled {
 		t.Fatalf("defaults replicas=%d deletionPolicy=%q dnsAutomationEnabled=%v", actual.Spec.ConnectorReplicas, actual.Spec.DeletionPolicy, actual.Spec.DNSAutomationEnabled)
 	}
 	assertDNSAutomationOptOutPreserved(t, ctx, kubeClient, binding)

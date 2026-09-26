@@ -31,7 +31,7 @@ kubectl -n my-app get cloudflaretunnelbinding public -o yaml
 
 A healthy provider reports `Accepted=True` and `CredentialsValid=True`. A healthy binding reports all five conditions as true: `Accepted`, `Programmed`, `ConnectorReady`, `DNSAutomationReady`, and `Ready`. `DNSAutomationReady=True` can mean either that the owned `DNSEndpoint` exists or that DNS automation was intentionally disabled.
 
-The binding's `status.resources` lists the connector Deployment, PodDisruptionBudget, token Secret, and optional `DNSEndpoint` names without exposing credentials. `status.publishedHostnames` shows the hostnames programmed into the tunnel. When DNS automation is enabled, `status.dnsRecords` shows the exact public DNS contract derived from those HTTPRoutes.
+The binding's `status.resources` lists the connector Deployment, token Secret, and optional `DNSEndpoint` names without exposing credentials. `status.publishedHostnames` shows the hostnames programmed into the tunnel. When DNS automation is enabled, `status.dnsRecords` shows the exact public DNS contract derived from those HTTPRoutes.
 
 ## DNS modes
 

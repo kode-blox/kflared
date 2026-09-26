@@ -50,8 +50,8 @@ type CloudflareTunnelPrivateRouteSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="providerRef is immutable"
 	ProviderRef LocalReference               `json:"providerRef"`
 	ServiceRef  PrivateRouteServiceReference `json:"serviceRef"`
-	// +kubebuilder:default=2
-	// +kubebuilder:validation:Minimum=2
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=10
 	ConnectorReplicas int32 `json:"connectorReplicas,omitempty"`
 	// +kubebuilder:default=Delete

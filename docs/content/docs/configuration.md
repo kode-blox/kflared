@@ -54,7 +54,7 @@ spec:
     name: traefik-cloudflare
     namespace: traefik
     port: cloudflare
-  connectorReplicas: 2
+  connectorReplicas: 1
   dnsAutomationEnabled: true
   deletionPolicy: Delete
 ```
@@ -65,7 +65,7 @@ spec:
 | `providerRef.name`     | Cluster-scoped provider to use. The reference is immutable.                                                 |
 | `gatewayRef`           | Existing Gateway and HTTP listener in the binding namespace. The reference is immutable.                    |
 | `originServiceRef`     | Service name and port used as the tunnel origin; namespace defaults to the binding namespace.               |
-| `connectorReplicas`    | Official cloudflared connector replicas. Defaults to and cannot be lower than `2`.                          |
+| `connectorReplicas`    | Official cloudflared connector replicas. Defaults to `1`; accepts `1` through `10`.                          |
 | `dnsAutomationEnabled` | Whether KFlared manages an ExternalDNS `DNSEndpoint`. Defaults to `true`; set `false` for external DNS.     |
 | `deletionPolicy`       | `Delete` removes the remote tunnel; `Retain` leaves it and its remote configuration intact.                 |
 
@@ -114,7 +114,7 @@ spec:
     name: kubernetes
     namespace: default
     port: https
-  connectorReplicas: 2
+  connectorReplicas: 1
   deletionPolicy: Delete
 ```
 
@@ -123,7 +123,7 @@ spec:
 | `controller` | KFlared controller class that owns this route. |
 | `providerRef.name` | Cluster-scoped provider supplying account credentials and tunnel ownership. |
 | `serviceRef` | Destination Service name, optional namespace (defaults to the route namespace), and port. The Service must have a ClusterIP. |
-| `connectorReplicas` | Number of official cloudflared connector replicas. |
+| `connectorReplicas` | Number of official cloudflared connector replicas. Defaults to `1`; accepts `1` through `10`. |
 | `deletionPolicy` | `Delete` removes the Cloudflare CIDR route and tunnel; `Retain` retains their Cloudflare state while deleting generated Kubernetes resources. |
 
 KFlared resolves the Service's current ClusterIP and creates an exact single-address `/32` Cloudflare private network route. Do not enter or hard-code a ClusterIP in the resource. A cross-namespace Service reference requires this grant in the Service namespace:

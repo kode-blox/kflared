@@ -27,13 +27,11 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -488,22 +486,11 @@ func (r *CloudflareTunnelPrivateRouteReconciler) ensureConnector(ctx context.Con
 	}); err != nil {
 		return nil, err
 	}
-	pdb := &policyv1.PodDisruptionBudget{Name: name, Namespace: namespace}
-	if _, err := controllerutil.CreateOrPatch(ctx, r.Client, pdb, func() error {
-		if err := verifyPrivateChild(route, pdb); err != nil {
-			return err
-		}
-		pdb.Labels = childLabels
-		pdb.Spec.Selector = &metav1.LabelSelector{MatchLabels: childLabels}
-		pdb.Spec.MaxUnavailable = &intstr.IntOrString{Type: intstr.Int, IntVal: 1}
-		return nil
-	}); err != nil {
-		return nil, err
-	}
 	return deployment, r.patchStatus(ctx, route, func() {
-		route.Status.Resources = kflaredv1alpha1.ConnectorResourceNames{Deployment: name, PodDisruptionBudget: name, Secret: name}
+		route.Status.Resources = kflaredv1alpha1.ConnectorResourceNames{Deployment: name, Secret: name}
 	})
 }
+
 func verifyPrivateChild(route *kflaredv1alpha1.CloudflareTunnelPrivateRoute, object client.Object) error {
 	if object.GetUID() != "" && object.GetLabels()[privateUIDLabel] != string(route.UID) {
 		return fmt.Errorf("refusing to adopt unowned child %s/%s", object.GetNamespace(), object.GetName())
@@ -521,7 +508,7 @@ func (r *CloudflareTunnelPrivateRouteReconciler) finalize(ctx context.Context, r
 		}
 	}
 	name := privateResourceName(route.UID)
-	for _, object := range []client.Object{&appsv1.Deployment{Name: name, Namespace: r.systemNamespace()}, &policyv1.PodDisruptionBudget{Name: name, Namespace: r.systemNamespace()}, &corev1.Secret{Name: name, Namespace: r.systemNamespace()}} {
+	for _, object := range []client.Object{&appsv1.Deployment{Name: name, Namespace: r.systemNamespace()}, &corev1.Secret{Name: name, Namespace: r.systemNamespace()}} {
 		current := object.DeepCopyObject().(client.Object)
 		err := r.Get(ctx, types.NamespacedName{Namespace: object.GetNamespace(), Name: object.GetName()}, current)
 		if apierrors.IsNotFound(err) {

@@ -10,6 +10,8 @@ import (
 	cfclient "github.com/kode-blox/kflared/internal/cloudflare"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -254,5 +256,37 @@ func TestPrivateRouteRetainRemovesConnectorButPreservesCloudflareState(t *testin
 	}
 	if err := kube.Get(ctx, client.ObjectKeyFromObject(child), &corev1.Secret{}); err == nil {
 		t.Fatal("Retain policy left the connector token Secret")
+	}
+}
+
+func TestPrivateRouteSingleConnector(t *testing.T) {
+	ctx := context.Background()
+	scheme := bindingTestScheme(t)
+	route := &kflaredv1alpha1.CloudflareTunnelPrivateRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: testPrivateRouteName, Namespace: testTenantName, UID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
+		Spec:       kflaredv1alpha1.CloudflareTunnelPrivateRouteSpec{ConnectorReplicas: 1},
+	}
+	name := privateResourceName(route.UID)
+	kube := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(route).WithObjects(route).Build()
+	r := &CloudflareTunnelPrivateRouteReconciler{Client: kube, Scheme: scheme}
+	deployment, err := r.ensureConnector(ctx, route, testConnectorToken)
+	if err != nil {
+		t.Fatalf("ensure single connector: %v", err)
+	}
+	if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 1 {
+		t.Fatalf("deployment replicas = %v, want 1", deployment.Spec.Replicas)
+	}
+	if err := kube.Get(ctx, client.ObjectKey{Namespace: defaultSystemNamespace, Name: name}, &policyv1.PodDisruptionBudget{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("unexpected disruption budget: %v", err)
+	}
+	actual := &kflaredv1alpha1.CloudflareTunnelPrivateRoute{}
+	if err := kube.Get(ctx, client.ObjectKeyFromObject(route), actual); err != nil {
+		t.Fatal(err)
+	}
+	if actual.Status.Resources.Deployment != name || actual.Status.Resources.Secret != name {
+		t.Fatalf("connector resource status = %#v", actual.Status.Resources)
+	}
+	if _, err := r.ensureConnector(ctx, actual, testConnectorToken); err != nil {
+		t.Fatalf("repeat reconcile: %v", err)
 	}
 }

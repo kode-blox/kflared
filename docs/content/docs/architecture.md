@@ -33,7 +33,7 @@ ingress:
   - service: http_status:404
 ```
 
-It deploys at least two official cloudflared connectors in `kflared`. By default, every hostname targets `<tunnel-id>.cfargotunnel.com` through a binding-owned `DNSEndpoint`. Without that CRD, exact records remain visible in binding status for manual administration. A binding can disable DNS automation when its public hostname must retain an externally managed target; the tunnel hostname remains programmed for alternate Cloudflare edge paths without asserting public CNAME intent.
+It deploys official cloudflared connectors in `kflared` (one by default, or more when requested). By default, every hostname targets `<tunnel-id>.cfargotunnel.com` through a binding-owned `DNSEndpoint`. Without that CRD, exact records remain visible in binding status for manual administration. A binding can disable DNS automation when its public hostname must retain an externally managed target; the tunnel hostname remains programmed for alternate Cloudflare edge paths without asserting public CNAME intent.
 
 The controller continuously compares desired and observed state. Kubernetes watches trigger prompt reconciliation; controller-runtime exponential backoff handles errors, while stable validation conditions use periodic requeues without error storms.
 
@@ -63,7 +63,7 @@ The route covers the Service IP independent of port. `serviceRef.port` confirms 
 | Cloudflare account                                   | Administrator     | Reference only                             |
 | DNS zone                                             | Administrator     | Allow-list only                            |
 | Tunnel and complete ingress config                   | Binding           | Create, recover, repair, delete or retain  |
-| Connector Deployment, PDB, and token Secret          | Binding           | Create, repair, delete                     |
+| Connector Deployment and token Secret               | Binding           | Create, repair, delete                     |
 | DNSEndpoint                                          | Binding           | Create and repair when enabled; delete when disabled or the binding is deleted |
 | GatewayClass, Gateway, HTTPRoute, and ReferenceGrant | Traefik and users | Read only; grants are checked for cross-namespace origins |
 | Traefik Service                                      | Administrator     | Read only                                  |

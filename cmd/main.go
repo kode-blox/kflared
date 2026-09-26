@@ -31,7 +31,6 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -185,7 +184,6 @@ func main() {
 		Client: client.Options{Cache: &client.CacheOptions{DisableFor: []client.Object{
 			&corev1.Secret{},
 			&appsv1.Deployment{},
-			&policyv1.PodDisruptionBudget{},
 		}}},
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,

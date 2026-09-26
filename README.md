@@ -22,7 +22,7 @@ See the [KFlared documentation](https://kflared.kodeblox.com), [architecture](do
 - one `CloudflareTunnelBinding`, one existing Gateway, and one remotely managed tunnel
 - one named HTTP listener and concrete, non-wildcard HTTPRoute hostnames
 - binding, Gateway, and HTTPRoutes in the application namespace; an origin Service may be cross-namespace with a matching ReferenceGrant
-- official `cloudflare/cloudflared:2026.8.3`, two or more replicas
+- official `cloudflare/cloudflared:2026.8.3`, one or more replicas (one by default)
 - per-binding ExternalDNS `DNSEndpoint` automation, enabled by default, with an explicit opt-out for externally managed DNS targets
 
 GRPCRoute, wildcard hostnames, HTTPS origins, direct Service backend routing, shared/imported tunnels, externally managed connectors, and native GatewayClass ownership are deferred.

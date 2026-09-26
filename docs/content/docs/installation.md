@@ -33,6 +33,12 @@ helm upgrade --install kflared ./charts \
 
 KFlared CRDs live in Helm's special `crds/` directory. Helm installs them before templates and deliberately does not upgrade or delete them. Use `--skip-crds` only when a cluster administrator manages the CRDs separately.
 
+### Upgrade to one connector
+
+To set `spec.connectorReplicas: 1` on an existing installation, apply the updated `CloudflareTunnelBinding` and `CloudflareTunnelPrivateRoute` CRDs from `config/crd/bases/` before updating the resources. Helm does not upgrade CRDs in `charts/crds/`; if the old CRD remains, Kubernetes still rejects one replica. Roll out the updated controller after the CRDs. The new default of one applies to newly defaulted resources; existing resources with `connectorReplicas: 2` must be changed explicitly.
+
+KFlared no longer creates or manages connector PodDisruptionBudgets. Existing budgets remain in the controller namespace until an administrator deletes them. Inspect the budget and its labels before deleting it; the controller does not perform this cleanup.
+
 ### Upgrade to per-binding DNS automation control
 
 Before using `spec.dnsAutomationEnabled`, apply the updated CRD from `config/crd/bases/` or synchronize the equivalent CRD-only GitOps source. An ordinary `helm upgrade` does **not** update `charts/crds/`, so it cannot add this field to an existing cluster.

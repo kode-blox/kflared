@@ -77,8 +77,8 @@ type CloudflareTunnelBindingSpec struct {
 	OriginServiceRef OriginServiceReference `json:"originServiceRef"`
 
 	// connectorReplicas controls the number of official cloudflared connectors.
-	// +kubebuilder:default=2
-	// +kubebuilder:validation:Minimum=2
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=10
 	ConnectorReplicas int32 `json:"connectorReplicas,omitempty"`
 
@@ -104,10 +104,9 @@ type DNSRecord struct {
 
 // ConnectorResourceNames records the generated resources without exposing credentials.
 type ConnectorResourceNames struct {
-	Deployment          string `json:"deployment,omitempty"`
-	PodDisruptionBudget string `json:"podDisruptionBudget,omitempty"`
-	Secret              string `json:"secret,omitempty"`
-	DNSEndpoint         string `json:"dnsEndpoint,omitempty"`
+	Deployment  string `json:"deployment,omitempty"`
+	Secret      string `json:"secret,omitempty"`
+	DNSEndpoint string `json:"dnsEndpoint,omitempty"`
 }
 
 // CloudflareTunnelBindingStatus defines the observed binding state.

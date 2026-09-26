@@ -91,6 +91,8 @@ func (w *failingStatusWriter) Patch(_ context.Context, _ client.Object, _ client
 func TestBindingReconcileCreatesIdempotentTunnelAndHardenedConnectors(t *testing.T) {
 	scheme := bindingTestScheme(t)
 	objects, binding := validBindingObjects()
+	binding.Spec.ConnectorReplicas = 1
+	resourceName := connectorResourceName(binding.UID)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&kflaredv1alpha1.CloudflareTunnelBinding{}, &kflaredv1alpha1.ClusterCloudflareProvider{}, &gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{}, &appsv1.Deployment{}).
 		WithObjects(objects...).Build()
@@ -104,7 +106,6 @@ func TestBindingReconcileCreatesIdempotentTunnelAndHardenedConnectors(t *testing
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 		t.Fatalf("create tunnel and connectors: %v", err)
 	}
-	resourceName := connectorResourceName(binding.UID)
 	endpointKey := types.NamespacedName{Namespace: binding.Namespace, Name: resourceName}
 	setTestDNSEndpointProxyValue(t, kubeClient, endpointKey, "false")
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
@@ -127,9 +128,18 @@ func TestBindingReconcileCreatesIdempotentTunnelAndHardenedConnectors(t *testing
 	if actualBinding.Status.TunnelID != testTunnelID || len(actualBinding.Status.DNSRecords) != 1 {
 		t.Fatalf("unexpected binding status: %#v", actualBinding.Status)
 	}
+	if actualBinding.Status.Resources.Deployment != resourceName || actualBinding.Status.Resources.Secret != resourceName {
+		t.Fatalf("unexpected connector resources: %#v", actualBinding.Status.Resources)
+	}
 	deployment := &appsv1.Deployment{}
 	if err := kubeClient.Get(context.Background(), types.NamespacedName{Namespace: defaultSystemNamespace, Name: resourceName}, deployment); err != nil {
 		t.Fatal(err)
+	}
+	if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 1 {
+		t.Fatalf("connector replicas = %v, want 1", deployment.Spec.Replicas)
+	}
+	if err := kubeClient.Get(context.Background(), types.NamespacedName{Namespace: defaultSystemNamespace, Name: resourceName}, &policyv1.PodDisruptionBudget{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("unexpected connector PodDisruptionBudget: %v", err)
 	}
 	pod := deployment.Spec.Template.Spec
 	if pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken || pod.SecurityContext == nil || pod.SecurityContext.SeccompProfile == nil {
@@ -217,9 +227,6 @@ func TestBindingReconcileDisablesDNSAutomationAndDeletesOwnedDNSEndpoint(t *test
 	connectorKey := types.NamespacedName{Namespace: defaultSystemNamespace, Name: resourceName}
 	if err := kubeClient.Get(context.Background(), connectorKey, &appsv1.Deployment{}); err != nil {
 		t.Fatalf("get connector Deployment after DNS opt-out: %v", err)
-	}
-	if err := kubeClient.Get(context.Background(), connectorKey, &policyv1.PodDisruptionBudget{}); err != nil {
-		t.Fatalf("get connector PodDisruptionBudget after DNS opt-out: %v", err)
 	}
 	if err := kubeClient.Get(context.Background(), connectorKey, &corev1.Secret{}); err != nil {
 		t.Fatalf("get connector Secret after DNS opt-out: %v", err)
@@ -941,14 +948,6 @@ func TestBindingReportsOperationalReconciliationFailures(t *testing.T) {
 			objectKey:       types.NamespacedName{Namespace: defaultSystemNamespace, Name: testManagedResourceName},
 		},
 		{
-			name:            "PodDisruptionBudget",
-			failedCondition: kflaredv1alpha1.BindingConditionConnectorReady,
-			reason:          testConnectorReconciliationReason,
-			message:         testConnectorReconciliationMessage,
-			objectFailure:   &policyv1.PodDisruptionBudget{},
-			objectKey:       types.NamespacedName{Namespace: defaultSystemNamespace, Name: testManagedResourceName},
-		},
-		{
 			name:            "DNS",
 			failedCondition: kflaredv1alpha1.BindingConditionDNSAutomationReady,
 			reason:          "DNSReconciliationFailed",
@@ -1124,7 +1123,9 @@ func TestConnectorReplicasClampedToSupportedRange(t *testing.T) {
 		value int32
 		want  int32
 	}{
-		{value: 0, want: 2},
+		{value: 0, want: 1},
+		{value: 1, want: 1},
+		{value: -1, want: 1},
 		{value: 5, want: 5},
 		{value: 11, want: 10},
 	}
@@ -1355,10 +1356,9 @@ func setPublishedBindingStatus(binding *kflaredv1alpha1.CloudflareTunnelBinding)
 			Target:   "tunnel-id.cfargotunnel.com",
 		}},
 		Resources: kflaredv1alpha1.ConnectorResourceNames{
-			Deployment:          testManagedResourceName,
-			PodDisruptionBudget: testManagedResourceName,
-			Secret:              testManagedResourceName,
-			DNSEndpoint:         testManagedResourceName,
+			Deployment:  testManagedResourceName,
+			Secret:      testManagedResourceName,
+			DNSEndpoint: testManagedResourceName,
 		},
 		Conditions: []metav1.Condition{
 			currentCondition(kflaredv1alpha1.BindingConditionAccepted),
@@ -1408,17 +1408,12 @@ func finalizingBindingObjects(deletionPolicy kflaredv1alpha1.DeletionPolicy) ([]
 	endpoint.SetName(resourceName)
 	endpoint.SetNamespace(binding.Namespace)
 	endpoint.SetLabels(managedLabels(binding))
-	pdb := &policyv1.PodDisruptionBudget{}
-	pdb.Name = resourceName
-	pdb.Namespace = defaultSystemNamespace
-	pdb.Labels = managedLabels(binding)
 	secret := &corev1.Secret{}
 	secret.Name = resourceName
 	secret.Namespace = defaultSystemNamespace
 	secret.Labels = managedLabels(binding)
 	return append(objects,
 		testDeployment(resourceName, defaultSystemNamespace, managedLabels(binding)),
-		pdb,
 		secret,
 		endpoint,
 	), binding
@@ -1432,7 +1427,6 @@ func assertFinalizationResourcesDeleted(t *testing.T, kubeClient client.Client, 
 	endpoint.SetKind(dnsEndpointKind)
 	objects := []client.Object{
 		&appsv1.Deployment{Name: resourceName, Namespace: defaultSystemNamespace},
-		&policyv1.PodDisruptionBudget{Name: resourceName, Namespace: defaultSystemNamespace},
 		&corev1.Secret{Name: resourceName, Namespace: defaultSystemNamespace},
 		endpoint,
 	}

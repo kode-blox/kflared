@@ -14,5 +14,5 @@ spec:
     name: kubernetes
     namespace: default
     port: https
-  connectorReplicas: 2
+  connectorReplicas: 1
   deletionPolicy: Delete
