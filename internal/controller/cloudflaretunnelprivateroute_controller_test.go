@@ -263,8 +263,8 @@ func TestPrivateRouteSingleConnector(t *testing.T) {
 	ctx := context.Background()
 	scheme := bindingTestScheme(t)
 	route := &kflaredv1alpha1.CloudflareTunnelPrivateRoute{
-		ObjectMeta: metav1.ObjectMeta{Name: testPrivateRouteName, Namespace: testTenantName, UID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
-		Spec:       kflaredv1alpha1.CloudflareTunnelPrivateRouteSpec{ConnectorReplicas: 1},
+		Name: testPrivateRouteName, Namespace: testTenantName, UID: "cccccccc-dddd-eeee-ffff-000000000000",
+		Spec: kflaredv1alpha1.CloudflareTunnelPrivateRouteSpec{ConnectorReplicas: 1},
 	}
 	name := privateResourceName(route.UID)
 	kube := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(route).WithObjects(route).Build()

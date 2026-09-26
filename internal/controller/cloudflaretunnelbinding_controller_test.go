@@ -128,19 +128,7 @@ func TestBindingReconcileCreatesIdempotentTunnelAndHardenedConnectors(t *testing
 	if actualBinding.Status.TunnelID != testTunnelID || len(actualBinding.Status.DNSRecords) != 1 {
 		t.Fatalf("unexpected binding status: %#v", actualBinding.Status)
 	}
-	if actualBinding.Status.Resources.Deployment != resourceName || actualBinding.Status.Resources.Secret != resourceName {
-		t.Fatalf("unexpected connector resources: %#v", actualBinding.Status.Resources)
-	}
-	deployment := &appsv1.Deployment{}
-	if err := kubeClient.Get(context.Background(), types.NamespacedName{Namespace: defaultSystemNamespace, Name: resourceName}, deployment); err != nil {
-		t.Fatal(err)
-	}
-	if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 1 {
-		t.Fatalf("connector replicas = %v, want 1", deployment.Spec.Replicas)
-	}
-	if err := kubeClient.Get(context.Background(), types.NamespacedName{Namespace: defaultSystemNamespace, Name: resourceName}, &policyv1.PodDisruptionBudget{}); !apierrors.IsNotFound(err) {
-		t.Fatalf("unexpected connector PodDisruptionBudget: %v", err)
-	}
+	deployment := assertSingleConnectorResources(t, kubeClient, actualBinding, resourceName)
 	pod := deployment.Spec.Template.Spec
 	if pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken || pod.SecurityContext == nil || pod.SecurityContext.SeccompProfile == nil {
 		t.Fatalf("connector pod is not hardened: %#v", pod)
@@ -173,6 +161,25 @@ func TestBindingReconcileCreatesIdempotentTunnelAndHardenedConnectors(t *testing
 		}},
 	}}
 	assertTestDNSEndpointEndpoints(t, kubeClient, endpointKey, expectedEndpoints)
+}
+
+func assertSingleConnectorResources(t *testing.T, kubeClient client.Client, binding *kflaredv1alpha1.CloudflareTunnelBinding, resourceName string) *appsv1.Deployment {
+	t.Helper()
+	if binding.Status.Resources.Deployment != resourceName || binding.Status.Resources.Secret != resourceName {
+		t.Fatalf("unexpected connector resources: %#v", binding.Status.Resources)
+	}
+	key := types.NamespacedName{Namespace: defaultSystemNamespace, Name: resourceName}
+	deployment := &appsv1.Deployment{}
+	if err := kubeClient.Get(context.Background(), key, deployment); err != nil {
+		t.Fatal(err)
+	}
+	if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 1 {
+		t.Fatalf("connector replicas = %v, want 1", deployment.Spec.Replicas)
+	}
+	if err := kubeClient.Get(context.Background(), key, &policyv1.PodDisruptionBudget{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("unexpected connector PodDisruptionBudget: %v", err)
+	}
+	return deployment
 }
 
 func TestBindingReconcileDisablesDNSAutomationAndDeletesOwnedDNSEndpoint(t *testing.T) {
