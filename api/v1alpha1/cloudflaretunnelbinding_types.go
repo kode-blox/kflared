@@ -33,11 +33,11 @@ const (
 	DeletionPolicyRetain DeletionPolicy = "Retain"
 )
 
-// DeletionPolicy controls whether the remote Cloudflare Tunnel is removed with the binding.
+// DeletionPolicy controls whether remote Cloudflare resources are removed with their owner.
 // +kubebuilder:validation:Enum=Delete;Retain
 type DeletionPolicy string
 
-// LocalReference identifies a resource in the binding namespace.
+// LocalReference identifies a referenced resource by name.
 type LocalReference struct {
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`

@@ -1,6 +1,6 @@
 # KFlared Helm chart
 
-This chart installs KFlared, a Gateway controller for Cloudflare Tunnel, along with its CRDs, least-privilege RBAC, and metrics Service. Gateway API v1.6.1, Traefik 3.7.10+, and optional ExternalDNS remain cluster prerequisites.
+This chart installs KFlared, a controller for public Gateway hostname bindings and private Cloudflare network routes, along with its CRDs, least-privilege RBAC, and metrics Service. Gateway API v1.6.1, Traefik 3.7.10+, and optional ExternalDNS remain prerequisites for public hostname bindings.
 
 The chart combines the current Helm starter's conventional layout and helpers with the controller resource inventory generated from Kubebuilder/Kustomize. Kustomize remains the canonical source for generated CRDs and RBAC permissions; chart tests detect drift between the two distributions.
 
@@ -69,9 +69,15 @@ clusterCloudflareProvider:
       kflared.kodeblox.com/cloudflare-provider: cloudflare-production
 ```
 
-`apiTokenSecretRef.name` is optional and defaults to `externalSecrets.targetSecretName`, which keeps manual-Secret and External Secrets Operator installations on the same credential contract. `allowedDNSZones` must contain at least one zone. `bindingNamespaceSelector: {}` intentionally permits bindings from every namespace; use a label selector in shared clusters.
+`apiTokenSecretRef.name` is optional and defaults to `externalSecrets.targetSecretName`, which keeps manual-Secret and External Secrets Operator installations on the same credential contract. `allowedDNSZones` may be empty when the provider serves only private routes; in that case it cannot publish hostnames through `CloudflareTunnelBinding`. `bindingNamespaceSelector: {}` intentionally permits bindings and private routes from every namespace; use a label selector in shared clusters.
 
-Before uninstalling a release that manages a provider, delete or migrate all `CloudflareTunnelBinding` resources that reference it. The provider finalizer correctly blocks deletion while bindings remain, but Helm also removes the controller during uninstall and cannot complete that finalization afterward.
+Before uninstalling a release that manages a provider, delete or migrate all `CloudflareTunnelBinding` and `CloudflareTunnelPrivateRoute` resources that reference it. Provider and route finalizers need the controller to complete cleanup; Helm removes the controller during uninstall and cannot complete finalization afterward. Review each private route's `deletionPolicy` and Cloudflare route ownership before removal. A `Retain` policy intentionally leaves the remote private route and tunnel for administrator-managed cleanup.
+
+The chart grants the manager access to namespaced `CloudflareTunnelPrivateRoute` objects and to the referenced Services and ReferenceGrants. Users can bind the built-in Kubernetes API Service using a private-route resource without exposing a public API hostname. Cloudflare One enrollment and WARP access policy, applying the updated release, and end-to-end validation are operator-managed rollout steps.
+
+A private route addresses the Service IP as `/32`; Cloudflare's CIDR route does not limit traffic to the selected Service port. Apply Cloudflare One policy and cluster firewall/network policy to constrain client access to the required port (typically TCP 443 for the Kubernetes API). KFlared checks that the requested Service port exists, but that check does not enforce the port on routed traffic.
+
+Cloudflare excludes RFC1918 destinations from WARP Split Tunnels by default. Operators must include the route in the intended clients' Split Tunnel configuration and apply Cloudflare Gateway policies that allow the intended identities and port, then block other private-network traffic. See Cloudflare's [CIDR routing guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/private-net/cloudflared/connect-cidr/). These Cloudflare settings and release rollout steps are performed by the cluster and Cloudflare administrators.
 
 Use `--skip-crds` with Helm, or `spec.source.helm.skipCrds: true` with Argo CD, only when cluster administrators manage these CRDs separately. Use `--include-crds` when rendering the complete chart with `helm template`.
 

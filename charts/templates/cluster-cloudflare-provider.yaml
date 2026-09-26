@@ -13,7 +13,7 @@ spec:
     name: {{ default (include "kflared.secretName" .) $provider.apiTokenSecretRef.name | quote }}
     key: {{ required "clusterCloudflareProvider.apiTokenSecretRef.key is required when clusterCloudflareProvider.enabled=true" $provider.apiTokenSecretRef.key | quote }}
   allowedDNSZones:
-    {{- required "clusterCloudflareProvider.allowedDNSZones must contain at least one zone when clusterCloudflareProvider.enabled=true" $provider.allowedDNSZones | toYaml | nindent 4 }}
+    {{- $provider.allowedDNSZones | toYaml | nindent 4 }}
   bindingNamespaceSelector:
     {{- $provider.bindingNamespaceSelector | toYaml | nindent 4 }}
 {{- end }}

@@ -3,7 +3,7 @@ title: Architecture
 description: Understand KFlared's integration boundary, traffic path, and ownership model.
 ---
 
-`ClusterCloudflareProvider` describes an account trust boundary. `CloudflareTunnelBinding` binds one listener of one Traefik-managed Gateway to one controller-owned, remotely managed Cloudflare Tunnel. A Gateway does not represent a tunnel in this integration mode.
+`ClusterCloudflareProvider` describes an account trust boundary. `CloudflareTunnelBinding` binds one listener of one Traefik-managed Gateway to one controller-owned, remotely managed Cloudflare Tunnel. `CloudflareTunnelPrivateRoute` separately connects an enrolled Cloudflare One client to one Kubernetes Service through a Cloudflare private network route. A Gateway does not represent a tunnel in either integration mode.
 
 Each KFlared manager requires a non-empty controller class, and the Helm chart defaults it to `kflared`. Providers and bindings declare that class in `spec.controller`; the manager reconciles only exact matches, and a binding must also reference a provider with the same class. This allows separately configured KFlared instances to coexist in one cluster. Additional installations must override the default with distinct classes. The class is immutable on each resource, so migration between instances requires recreating resources.
 
@@ -37,6 +37,25 @@ It deploys at least two official cloudflared connectors in `kflared`. By default
 
 The controller continuously compares desired and observed state. Kubernetes watches trigger prompt reconciliation; controller-runtime exponential backoff handles errors, while stable validation conditions use periodic requeues without error storms.
 
+## Private network route
+
+```text
+kubectl on enrolled client (using the user's Kubernetes credentials)
+  -> Cloudflare One client / WARP
+  -> Cloudflare private network route (<Service ClusterIP>/32)
+  -> remotely managed Cloudflare Tunnel
+  -> official cloudflared connector Deployment
+  -> Kubernetes Service
+```
+
+Each `CloudflareTunnelPrivateRoute` owns a distinct Cloudflare CIDR route whose network is the referenced Service's current ClusterIP with a `/32` mask. KFlared reads the Service and keeps the route synchronized when its ClusterIP changes. The controller does not choose a cluster-wide Pod or Service CIDR and does not configure published-hostname ingress; Cloudflare CIDR routes and tunnel ingress are separate Cloudflare configuration surfaces. The built-in Kubernetes API Service is a valid target, but its name, namespace, port, and address are supplied through the resource rather than compiled into KFlared.
+
+The route resource is namespaced. A `serviceRef.namespace` outside that namespace requires a Gateway API `ReferenceGrant` in the target Service namespace, allowing `kflared.kodeblox.com` kind `CloudflareTunnelPrivateRoute` from the route namespace to reference the named core `Service`. KFlared validates this grant before reading the cross-namespace Service. This authorizes the reference, not network traffic; cluster networking must permit connector traffic to the Service.
+
+The connector does not need a Kubernetes ServiceAccount token to proxy packets. KFlared mounts only the Cloudflare connector token in its generated Deployment. `kubectl` continues to authenticate to Kubernetes with the user's existing Kubernetes credentials over WARP. Cloudflare One administrators must enroll and authorize the client and configure access to the routed private network; creating the KFlared resource alone does not enroll clients or grant Cloudflare Access policy.
+
+The route covers the Service IP independent of port. `serviceRef.port` confirms that the selected port exists on the Service; it cannot narrow a CIDR route to that port. Administrators must enforce port restrictions in Cloudflare One access policy and cluster firewall or network policy.
+
 ## Ownership boundaries
 
 | Resource                                             | Owner             | Controller action                          |
@@ -48,6 +67,8 @@ The controller continuously compares desired and observed state. Kubernetes watc
 | DNSEndpoint                                          | Binding           | Create and repair when enabled; delete when disabled or the binding is deleted |
 | GatewayClass, Gateway, HTTPRoute, and ReferenceGrant | Traefik and users | Read only; grants are checked for cross-namespace origins |
 | Traefik Service                                      | Administrator     | Read only                                  |
+| Cloudflare CIDR route (`<Service ClusterIP>/32`)      | PrivateRoute      | Create, adopt only when ownership is proven, update and delete or retain |
+| PrivateRoute connector Deployment and token Secret    | PrivateRoute      | Create, repair, delete                     |
 
 Tunnel names include the cluster identity and complete binding UID. A lost create response can therefore be recovered without adopting a name belonging to another Kubernetes object. Cloudflare's tunnel API does not expose arbitrary controller ownership metadata, so exact deterministic identity, remote-management mode, immutable provider and Gateway identity, and the persisted tunnel ID form the adoption boundary.
 

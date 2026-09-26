@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"slices"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -62,18 +63,21 @@ type fakeCloudflareFactory struct {
 func (f fakeCloudflareFactory) New(_, _ string) cfclient.Client { return f.client }
 
 type fakeCloudflareClient struct {
-	validateErr   error
-	validateCalls int
-	getTunnelErr  error
-	getConfigErr  error
-	getTokenErr   error
-	deleteErr     error
-	tunnel        *cfclient.Tunnel
-	configuration []cfclient.IngressRule
-	token         string
-	createCalls   int
-	updateCalls   int
-	deleteCalls   int
+	validateErr      error
+	validateCalls    int
+	getTunnelErr     error
+	getConfigErr     error
+	getTokenErr      error
+	deleteErr        error
+	tunnel           *cfclient.Tunnel
+	configuration    []cfclient.IngressRule
+	token            string
+	createCalls      int
+	updateCalls      int
+	deleteCalls      int
+	privateRoutes    []cfclient.PrivateRoute
+	createRouteCalls int
+	deleteRouteCalls int
 }
 
 func (f *fakeCloudflareClient) Validate(context.Context) error {
@@ -133,6 +137,44 @@ func (f *fakeCloudflareClient) DeleteTunnel(context.Context, string) error {
 		return f.deleteErr
 	}
 	f.tunnel = nil
+	return nil
+}
+
+func (f *fakeCloudflareClient) ListPrivateRoutes(_ context.Context, network string) ([]cfclient.PrivateRoute, error) {
+	var routes []cfclient.PrivateRoute
+	for _, route := range f.privateRoutes {
+		if route.Network == network {
+			routes = append(routes, route)
+		}
+	}
+	return routes, nil
+}
+
+func (f *fakeCloudflareClient) GetPrivateRoute(_ context.Context, id string) (*cfclient.PrivateRoute, error) {
+	for _, route := range f.privateRoutes {
+		if route.ID == id {
+			copy := route
+			return &copy, nil
+		}
+	}
+	return nil, nil
+}
+
+func (f *fakeCloudflareClient) CreatePrivateRoute(_ context.Context, network, tunnelID, comment string) (*cfclient.PrivateRoute, error) {
+	f.createRouteCalls++
+	route := cfclient.PrivateRoute{ID: fmt.Sprintf("private-route-%d", f.createRouteCalls), Network: network, TunnelID: tunnelID, Comment: comment}
+	f.privateRoutes = append(f.privateRoutes, route)
+	return &route, nil
+}
+
+func (f *fakeCloudflareClient) DeletePrivateRoute(_ context.Context, id string) error {
+	f.deleteRouteCalls++
+	for index, route := range f.privateRoutes {
+		if route.ID == id {
+			f.privateRoutes = append(f.privateRoutes[:index], f.privateRoutes[index+1:]...)
+			break
+		}
+	}
 	return nil
 }
 

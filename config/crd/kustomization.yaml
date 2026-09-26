@@ -4,6 +4,7 @@
 resources:
 - bases/kflared.kodeblox.com_cloudflaretunnelbindings.yaml
 - bases/kflared.kodeblox.com_clustercloudflareproviders.yaml
+- bases/kflared.kodeblox.com_cloudflaretunnelprivateroutes.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

@@ -50,6 +50,16 @@ type IngressRule struct {
 	Path     string
 }
 
+// PrivateRoute is an account-level CIDR route. Its ID is the handle used for
+// ownership checks and deletion; network and tunnel ID alone are not ownership.
+type PrivateRoute struct {
+	ID               string
+	Network          string
+	TunnelID         string
+	Comment          string
+	VirtualNetworkID string
+}
+
 // Client describes the least Cloudflare API surface required by the MVP.
 type Client interface {
 	Validate(ctx context.Context) error
@@ -60,6 +70,10 @@ type Client interface {
 	UpdateConfiguration(ctx context.Context, id string, rules []IngressRule) error
 	GetToken(ctx context.Context, id string) (string, error)
 	DeleteTunnel(ctx context.Context, id string) error
+	ListPrivateRoutes(ctx context.Context, network string) ([]PrivateRoute, error)
+	GetPrivateRoute(ctx context.Context, id string) (*PrivateRoute, error)
+	CreatePrivateRoute(ctx context.Context, network, tunnelID, comment string) (*PrivateRoute, error)
+	DeletePrivateRoute(ctx context.Context, id string) error
 }
 
 // Factory creates an account-scoped API client from a token read from a Secret.

@@ -1,0 +1,18 @@
+apiVersion: kflared.kodeblox.com/v1alpha1
+kind: CloudflareTunnelPrivateRoute
+metadata:
+  labels:
+    app.kubernetes.io/name: kflared
+    app.kubernetes.io/managed-by: kustomize
+  name: kubernetes-api
+  namespace: kflared
+spec:
+  controller: kflared
+  providerRef:
+    name: default
+  serviceRef:
+    name: kubernetes
+    namespace: default
+    port: https
+  connectorReplicas: 2
+  deletionPolicy: Delete

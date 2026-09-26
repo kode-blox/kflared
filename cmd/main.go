@@ -231,6 +231,16 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "cloudflaretunnelbinding")
 		os.Exit(1)
 	}
+	if err := (&controller.CloudflareTunnelPrivateRouteReconciler{
+		Client:          mgr.GetClient(),
+		Scheme:          mgr.GetScheme(),
+		Cloudflare:      cfclient.SDKFactory{},
+		SystemNamespace: systemNamespace,
+		ControllerClass: controllerClass,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "cloudflaretunnelprivateroute")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

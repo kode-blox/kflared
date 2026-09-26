@@ -130,7 +130,7 @@ clusterCloudflareProvider:
       kflared.kodeblox.com/cloudflare-provider: cloudflare-production
 ```
 
-`accountID` and one or more `allowedDNSZones` are required when enabled. `apiTokenSecretRef.name` is optional: it defaults to `externalSecrets.targetSecretName`, so the same rendered provider works with either a manually created Secret or the chart's optional `ExternalSecret`. The key defaults to `api-token` and must match the generated or manually managed Secret key.
+`accountID` is required when enabled. Set `allowedDNSZones` to one or more concrete zones for published hostnames, or `[]` for a private-route-only provider. `apiTokenSecretRef.name` is optional: it defaults to `externalSecrets.targetSecretName`, so the same rendered provider works with either a manually created Secret or the chart's optional `ExternalSecret`. The key defaults to `api-token` and must match the generated or manually managed Secret key.
 
 > **Warning:** `bindingNamespaceSelector: {}` intentionally permits bindings from every namespace. Use a namespace-label selector for a shared cluster.
 

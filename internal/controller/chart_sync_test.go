@@ -42,6 +42,10 @@ func TestHelmCRDsMatchGeneratedManifests(t *testing.T) {
 			generated: filepath.Join("..", "..", "config", "crd", "bases", "kflared.kodeblox.com_cloudflaretunnelbindings.yaml"),
 			chart:     filepath.Join("..", "..", "charts", "crds", "kflared.kodeblox.com_cloudflaretunnelbindings.yaml"),
 		},
+		{
+			generated: filepath.Join("..", "..", "config", "crd", "bases", "kflared.kodeblox.com_cloudflaretunnelprivateroutes.yaml"),
+			chart:     filepath.Join("..", "..", "charts", "crds", "kflared.kodeblox.com_cloudflaretunnelprivateroutes.yaml"),
+		},
 	}
 	for _, test := range tests {
 		generated, err := os.ReadFile(test.generated)
@@ -76,7 +80,7 @@ func TestManagerRBACAllowsMainResourceUpdatesForFinalizers(t *testing.T) {
 	generatedPath := filepath.Join("..", "..", "config", "rbac", "role.yaml")
 	rules := readClusterRoleRules(t, generatedPath, false)
 
-	for _, resource := range []string{"clustercloudflareproviders", "cloudflaretunnelbindings"} {
+	for _, resource := range []string{"clustercloudflareproviders", "cloudflaretunnelbindings", "cloudflaretunnelprivateroutes"} {
 		if !allowsResourceVerb(rules, "kflared.kodeblox.com", resource, "update") {
 			t.Errorf("%s must allow update on %s so the controller can manage finalizers", generatedPath, resource)
 		}

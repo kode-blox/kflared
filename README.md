@@ -1,6 +1,6 @@
 # KFlared
 
-KFlared is a Kode Blox Gateway controller for Cloudflare Tunnel. It publishes selected Kubernetes Gateway API hostnames through controller-owned tunnels while workloads and the Traefik data plane remain on private Kubernetes networking.
+KFlared manages Cloudflare Tunnels for two paths: it publishes selected Kubernetes Gateway API hostnames through controller-owned tunnels, and it can route a Service ClusterIP privately to enrolled Cloudflare One clients. Workloads and the Traefik data plane remain on private Kubernetes networking.
 
 The first release is deliberately an integration controller, not a Gateway API implementation:
 
@@ -26,6 +26,8 @@ See the [KFlared documentation](https://kflared.kodeblox.com), [architecture](do
 - per-binding ExternalDNS `DNSEndpoint` automation, enabled by default, with an explicit opt-out for externally managed DNS targets
 
 GRPCRoute, wildcard hostnames, HTTPS origins, direct Service backend routing, shared/imported tunnels, externally managed connectors, and native GatewayClass ownership are deferred.
+
+`CloudflareTunnelPrivateRoute` is a separate API for private CIDR routing. It targets a referenced Service's current ClusterIP as a single `/32` route and does not configure public hostnames or HTTPRoutes. See the [private route configuration](docs/content/docs/configuration.md#cloudflaretunnelprivateroute) and [architecture](docs/content/docs/architecture.md#private-network-route). Cloudflare One client enrollment/access policy and the user's Kubernetes credentials remain external prerequisites.
 
 ## Prerequisites
 
@@ -81,7 +83,7 @@ kubectl -n my-app get cloudflaretunnelbindings -o yaml
 
 ## Development
 
-The module targets Go 1.27.0, controller-runtime v0.24.1, Gateway API v1.6.1, and `cloudflare-go/v7` v7.8.0. On this workstation, invoke the existing versioned executable and do not alter the default Go installation:
+The module targets Go 1.27.0, controller-runtime v0.25.0, Gateway API v1.6.1, and `cloudflare-go/v7` v7.8.0. On this workstation, invoke the existing versioned executable and do not alter the default Go installation:
 
 ```sh
 go1.27.0 test ./...

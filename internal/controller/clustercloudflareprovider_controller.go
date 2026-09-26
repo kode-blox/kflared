@@ -58,6 +58,7 @@ type ClusterCloudflareProviderReconciler struct {
 // +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=clustercloudflareproviders/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=clustercloudflareproviders/finalizers,verbs=update
 // +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=cloudflaretunnelbindings,verbs=get;list;watch
+// +kubebuilder:rbac:groups=kflared.kodeblox.com,resources=cloudflaretunnelprivateroutes,verbs=get;list;watch
 
 func (r *ClusterCloudflareProviderReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	provider := &kflaredv1alpha1.ClusterCloudflareProvider{}
@@ -141,6 +142,15 @@ func (r *ClusterCloudflareProviderReconciler) finalize(ctx context.Context, prov
 	for i := range bindings.Items {
 		if bindings.Items[i].Spec.Controller == r.ControllerClass && bindings.Items[i].Spec.ProviderRef.Name == provider.Name {
 			return ctrl.Result{}, fmt.Errorf("provider is still referenced by CloudflareTunnelBinding %s/%s", bindings.Items[i].Namespace, bindings.Items[i].Name)
+		}
+	}
+	privateRoutes := &kflaredv1alpha1.CloudflareTunnelPrivateRouteList{}
+	if err := r.List(ctx, privateRoutes); err != nil {
+		return ctrl.Result{}, err
+	}
+	for i := range privateRoutes.Items {
+		if privateRoutes.Items[i].Spec.Controller == r.ControllerClass && privateRoutes.Items[i].Spec.ProviderRef.Name == provider.Name {
+			return ctrl.Result{}, fmt.Errorf("provider is still referenced by CloudflareTunnelPrivateRoute %s/%s", privateRoutes.Items[i].Namespace, privateRoutes.Items[i].Name)
 		}
 	}
 	controllerutil.RemoveFinalizer(provider, clusterProviderFinalizer)

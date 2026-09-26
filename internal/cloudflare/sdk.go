@@ -154,6 +154,62 @@ func (c *sdkClient) DeleteTunnel(ctx context.Context, id string) error {
 	return err
 }
 
+func (c *sdkClient) ListPrivateRoutes(ctx context.Context, network string) ([]PrivateRoute, error) {
+	// The API's network_subset filter can include narrower routes. Compare the
+	// returned CIDR exactly so a /32 never adopts or deletes a neighboring route.
+	pager := c.api.ZeroTrust.Networks.Routes.ListAutoPaging(ctx, zero_trust.NetworkRouteListParams{
+		AccountID:     cfapi.F(c.accountID),
+		NetworkSubset: cfapi.F(network),
+		IsDeleted:     cfapi.F(false),
+	})
+	var routes []PrivateRoute
+	for pager.Next() {
+		candidate := pager.Current()
+		if candidate.Network == network && candidate.DeletedAt.IsZero() {
+			routes = append(routes, PrivateRoute{ID: candidate.ID, Network: candidate.Network, TunnelID: candidate.TunnelID, Comment: candidate.Comment, VirtualNetworkID: candidate.VirtualNetworkID})
+		}
+	}
+	return routes, pager.Err()
+}
+
+func (c *sdkClient) GetPrivateRoute(ctx context.Context, id string) (*PrivateRoute, error) {
+	result, err := c.api.ZeroTrust.Networks.Routes.Get(ctx, id, zero_trust.NetworkRouteGetParams{AccountID: cfapi.F(c.accountID)})
+	if isNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !result.DeletedAt.IsZero() {
+		return nil, nil
+	}
+	return &PrivateRoute{ID: result.ID, Network: result.Network, TunnelID: result.TunnelID, Comment: result.Comment, VirtualNetworkID: result.VirtualNetworkID}, nil
+}
+
+func (c *sdkClient) CreatePrivateRoute(ctx context.Context, network, tunnelID, comment string) (*PrivateRoute, error) {
+	params := zero_trust.NetworkRouteNewParams{
+		AccountID: cfapi.F(c.accountID),
+		Network:   cfapi.F(network),
+		TunnelID:  cfapi.F(tunnelID),
+	}
+	if comment != "" {
+		params.Comment = cfapi.F(comment)
+	}
+	result, err := c.api.ZeroTrust.Networks.Routes.New(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+	return &PrivateRoute{ID: result.ID, Network: result.Network, TunnelID: result.TunnelID, Comment: result.Comment, VirtualNetworkID: result.VirtualNetworkID}, nil
+}
+
+func (c *sdkClient) DeletePrivateRoute(ctx context.Context, id string) error {
+	_, err := c.api.ZeroTrust.Networks.Routes.Delete(ctx, id, zero_trust.NetworkRouteDeleteParams{AccountID: cfapi.F(c.accountID)})
+	if isNotFound(err) {
+		return nil
+	}
+	return err
+}
+
 func isNotFound(err error) bool {
 	var apiErr *cfapi.Error
 	return errors.As(err, &apiErr) && apiErr.StatusCode == 404

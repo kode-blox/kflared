@@ -273,8 +273,7 @@
         "properties": {
           "clusterCloudflareProvider": {
             "properties": {
-              "accountID": {"minLength": 1},
-              "allowedDNSZones": {"minItems": 1}
+              "accountID": {"minLength": 1}
             }
           }
         }

@@ -124,7 +124,7 @@ spec:
                 - port
                 type: object
               providerRef:
-                description: LocalReference identifies a resource in the binding namespace.
+                description: LocalReference identifies a referenced resource by name.
                 properties:
                   name:
                     minLength: 1

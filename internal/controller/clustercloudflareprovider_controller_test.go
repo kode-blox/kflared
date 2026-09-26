@@ -127,6 +127,31 @@ func TestProviderFinalizationIgnoresBindingsFromOtherControllerClasses(t *testin
 	}
 }
 
+func TestProviderFinalizationWaitsForPrivateRoute(t *testing.T) {
+	scheme := providerTestScheme(t)
+	provider := readyClusterProvider()
+	provider.Finalizers = []string{clusterProviderFinalizer}
+	provider.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+	privateRoute := &kflaredv1alpha1.CloudflareTunnelPrivateRoute{}
+	privateRoute.Name = "api"
+	privateRoute.Namespace = testTenantName
+	privateRoute.Spec.Controller = testControllerClass
+	privateRoute.Spec.ProviderRef.Name = provider.Name
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(provider, privateRoute).Build()
+	reconciler := &ClusterCloudflareProviderReconciler{ControllerClass: testControllerClass, Client: kubeClient, Scheme: scheme}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{Name: provider.Name}); err == nil || !strings.Contains(err.Error(), "CloudflareTunnelPrivateRoute") {
+		t.Fatalf("expected private route to block provider deletion, got %v", err)
+	}
+	actual := &kflaredv1alpha1.ClusterCloudflareProvider{}
+	if err := kubeClient.Get(context.Background(), client.ObjectKeyFromObject(provider), actual); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(actual.Finalizers, clusterProviderFinalizer) {
+		t.Fatal("provider finalizer removed while private route exists")
+	}
+}
+
 func TestProviderReconcileClassifiesCredentialValidationFailures(t *testing.T) {
 	tests := []struct {
 		name       string

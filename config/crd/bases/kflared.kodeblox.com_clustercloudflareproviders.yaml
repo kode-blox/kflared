@@ -59,11 +59,11 @@ spec:
                 - message: accountID is immutable
                   rule: self == oldSelf
               allowedDNSZones:
-                description: allowedDNSZones is the explicit set of DNS suffixes this
-                  provider may publish.
+                description: |-
+                  allowedDNSZones is the explicit set of DNS suffixes this provider may publish.
+                  An empty list disables published hostnames for private-route-only providers.
                 items:
                   type: string
-                minItems: 1
                 type: array
                 x-kubernetes-list-type: set
               apiTokenSecretRef:
@@ -140,7 +140,6 @@ spec:
                   rule: self == oldSelf
             required:
             - accountID
-            - allowedDNSZones
             - apiTokenSecretRef
             - bindingNamespaceSelector
             - controller

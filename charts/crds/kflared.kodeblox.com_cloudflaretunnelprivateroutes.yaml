@@ -4,29 +4,29 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.22.0
-  name: clustercloudflareproviders.kflared.kodeblox.com
+  name: cloudflaretunnelprivateroutes.kflared.kodeblox.com
 spec:
   group: kflared.kodeblox.com
   names:
-    kind: ClusterCloudflareProvider
-    listKind: ClusterCloudflareProviderList
-    plural: clustercloudflareproviders
+    kind: CloudflareTunnelPrivateRoute
+    listKind: CloudflareTunnelPrivateRouteList
+    plural: cloudflaretunnelprivateroutes
     shortNames:
-    - ccfp
-    singular: clustercloudflareprovider
-  scope: Cluster
+    - cftpr
+    singular: cloudflaretunnelprivateroute
+  scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .status.conditions[?(@.type=='Accepted')].status
-      name: Accepted
+    - jsonPath: .status.network
+      name: Network
       type: string
-    - jsonPath: .status.conditions[?(@.type=='CredentialsValid')].status
-      name: Credentials
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
       type: string
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: ClusterCloudflareProvider is the Schema for the clustercloudflareproviders
+        description: CloudflareTunnelPrivateRoute is the Schema for the cloudflaretunnelprivateroutes
           API.
         properties:
           apiVersion:
@@ -47,110 +47,74 @@ spec:
           metadata:
             type: object
           spec:
-            description: ClusterCloudflareProviderSpec defines a Cloudflare account
-              and the tenants allowed to use it.
+            description: CloudflareTunnelPrivateRouteSpec defines one exact Service
+              IPv4 route.
             properties:
-              accountID:
-                description: accountID is the Cloudflare account identifier.
-                maxLength: 32
-                minLength: 1
-                type: string
-                x-kubernetes-validations:
-                - message: accountID is immutable
-                  rule: self == oldSelf
-              allowedDNSZones:
-                description: |-
-                  allowedDNSZones is the explicit set of DNS suffixes this provider may publish.
-                  An empty list disables published hostnames for private-route-only providers.
-                items:
-                  type: string
-                type: array
-                x-kubernetes-list-type: set
-              apiTokenSecretRef:
-                description: apiTokenSecretRef refers to a Secret in the KFlared system
-                  namespace.
-                properties:
-                  key:
-                    description: key is the Secret data key containing the API token.
-                    minLength: 1
-                    type: string
-                  name:
-                    description: name is the Secret name.
-                    minLength: 1
-                    type: string
-                required:
-                - key
-                - name
-                type: object
-              bindingNamespaceSelector:
-                description: |-
-                  bindingNamespaceSelector selects namespaces permitted to reference this provider.
-                  An empty selector intentionally permits all namespaces.
-                properties:
-                  matchExpressions:
-                    description: matchExpressions is a list of label selector requirements.
-                      The requirements are ANDed.
-                    items:
-                      description: |-
-                        A label selector requirement is a selector that contains values, a key, and an operator that
-                        relates the key and values.
-                      properties:
-                        key:
-                          description: key is the label key that the selector applies
-                            to.
-                          type: string
-                        operator:
-                          description: |-
-                            operator represents a key's relationship to a set of values.
-                            Valid operators are In, NotIn, Exists and DoesNotExist.
-                          type: string
-                        values:
-                          description: |-
-                            values is an array of string values. If the operator is In or NotIn,
-                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
-                            the values array must be empty. This array is replaced during a strategic
-                            merge patch.
-                          items:
-                            type: string
-                          type: array
-                          x-kubernetes-list-type: atomic
-                      required:
-                      - key
-                      - operator
-                      type: object
-                    type: array
-                    x-kubernetes-list-type: atomic
-                  matchLabels:
-                    additionalProperties:
-                      type: string
-                    description: |-
-                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
-                      map is equivalent to an element of matchExpressions, whose key field is "key", the
-                      operator is "In", and the values array contains only "value". The requirements are ANDed.
-                    type: object
-                type: object
-                x-kubernetes-map-type: atomic
+              connectorReplicas:
+                default: 2
+                format: int32
+                maximum: 10
+                minimum: 2
+                type: integer
               controller:
-                description: controller identifies the KFlared controller class that
-                  owns this provider.
                 minLength: 1
                 type: string
                 x-kubernetes-validations:
                 - message: controller is immutable
                   rule: self == oldSelf
+              deletionPolicy:
+                default: Delete
+                description: DeletionPolicy controls whether remote Cloudflare resources
+                  are removed with their owner.
+                enum:
+                - Delete
+                - Retain
+                type: string
+              providerRef:
+                description: LocalReference identifies a referenced resource by name.
+                properties:
+                  name:
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+                x-kubernetes-validations:
+                - message: providerRef is immutable
+                  rule: self == oldSelf
+              serviceRef:
+                description: PrivateRouteServiceReference identifies a non-headless
+                  ClusterIP Service.
+                properties:
+                  name:
+                    minLength: 1
+                    type: string
+                  namespace:
+                    description: namespace defaults to the route namespace.
+                    maxLength: 63
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                  port:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: port must exist on the Service. The CIDR route itself
+                      cannot restrict ports.
+                    x-kubernetes-int-or-string: true
+                required:
+                - name
+                - port
+                type: object
             required:
-            - accountID
-            - apiTokenSecretRef
-            - bindingNamespaceSelector
             - controller
+            - providerRef
+            - serviceRef
             type: object
           status:
-            description: ClusterCloudflareProviderStatus defines the observed provider
-              state.
+            description: CloudflareTunnelPrivateRouteStatus records Cloudflare IDs
+              needed for cleanup.
             properties:
               conditions:
-                description: conditions report provider validation and credential
-                  health.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -209,11 +173,30 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              network:
+                type: string
               observedGeneration:
-                description: observedGeneration is the most recent generation processed
-                  by the controller.
                 format: int64
                 type: integer
+              resources:
+                description: ConnectorResourceNames records the generated resources
+                  without exposing credentials.
+                properties:
+                  deployment:
+                    type: string
+                  dnsEndpoint:
+                    type: string
+                  podDisruptionBudget:
+                    type: string
+                  secret:
+                    type: string
+                type: object
+              routeID:
+                type: string
+              tunnelID:
+                type: string
+              tunnelName:
+                type: string
             type: object
         required:
         - spec

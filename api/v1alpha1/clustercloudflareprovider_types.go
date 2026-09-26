@@ -53,9 +53,10 @@ type ClusterCloudflareProviderSpec struct {
 	APITokenSecretRef SecretKeyReference `json:"apiTokenSecretRef"`
 
 	// allowedDNSZones is the explicit set of DNS suffixes this provider may publish.
-	// +kubebuilder:validation:MinItems=1
+	// An empty list disables published hostnames for private-route-only providers.
+	// +optional
 	// +listType=set
-	AllowedDNSZones []string `json:"allowedDNSZones"`
+	AllowedDNSZones []string `json:"allowedDNSZones,omitempty"`
 
 	// bindingNamespaceSelector selects namespaces permitted to reference this provider.
 	// An empty selector intentionally permits all namespaces.

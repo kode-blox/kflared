@@ -30,3 +30,6 @@ resources:
 - clustercloudflareprovider_admin_role.yaml
 - clustercloudflareprovider_editor_role.yaml
 - clustercloudflareprovider_viewer_role.yaml
+- cloudflaretunnelprivateroute_admin_role.yaml
+- cloudflaretunnelprivateroute_editor_role.yaml
+- cloudflaretunnelprivateroute_viewer_role.yaml
