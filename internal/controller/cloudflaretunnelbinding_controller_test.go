@@ -1432,13 +1432,13 @@ func assertFinalizationResourcesDeleted(t *testing.T, kubeClient client.Client, 
 	endpoint := &unstructured.Unstructured{}
 	endpoint.SetAPIVersion(dnsEndpointAPIVersion)
 	endpoint.SetKind(dnsEndpointKind)
+	endpoint.SetName(resourceName)
+	endpoint.SetNamespace(binding.Namespace)
 	objects := []client.Object{
 		&appsv1.Deployment{Name: resourceName, Namespace: defaultSystemNamespace},
 		&corev1.Secret{Name: resourceName, Namespace: defaultSystemNamespace},
 		endpoint,
 	}
-	objects[3].SetName(resourceName)
-	objects[3].SetNamespace(binding.Namespace)
 	for _, object := range objects {
 		err := kubeClient.Get(context.Background(), client.ObjectKeyFromObject(object), object)
 		if !apierrors.IsNotFound(err) {
