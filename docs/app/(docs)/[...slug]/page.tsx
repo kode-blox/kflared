@@ -1,4 +1,4 @@
-import { getPageImage, getPageMarkdownUrl, source } from "@/lib/source";
+import { source } from "@/lib/source";
 import {
   DocsBody,
   DocsDescription,
@@ -11,7 +11,7 @@ import { notFound } from "next/navigation";
 import { getMDXComponents } from "@/components/mdx";
 import type { Metadata } from "next";
 import { createRelativeLink } from "fumadocs-ui/mdx";
-import { gitConfig } from "@/lib/shared";
+import { getPageImageUrl, getPageMarkdownUrl, gitConfig } from "@/lib/shared";
 
 type RootDocsPageProps = {
   params: Promise<{
@@ -65,7 +65,7 @@ export async function generateMetadata(props: RootDocsPageProps): Promise<Metada
     title: page.data.title,
     description: page.data.description,
     openGraph: {
-      images: getPageImage(page).url,
+      images: getPageImageUrl(page).url,
     },
   };
 }

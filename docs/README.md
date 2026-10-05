@@ -1,6 +1,8 @@
 # KFlared documentation site
 
-The documentation website uses the official `fumadocs-mdx` content source, Fumadocs Core and UI, and a statically exported Next.js application. Authored documentation lives in `content/docs`.
+The documentation website uses the official `fumadocs-mdx` content source, Fumadocs Core and UI, and a statically exported Next.js application. Authored documentation lives in `content/docs`. Collections are defined through the MDX Macro API in `lib/source.ts`, with lazy bodies and processed Markdown enabled. No separate collection-codegen step or `collections/*` alias is needed.
+
+`fumadocs-ui` aliases `@fumadocs/base-ui`; search uses the static Fumadocs client. Shared Markdown and Open Graph URL helpers live in `lib/shared.ts`.
 
 The landing page and documentation pages use Fumadocs layouts, documentation pages expose copy and source-view controls, and the static export includes search, Open Graph images, and machine-readable Markdown routes.
 

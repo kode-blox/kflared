@@ -7,34 +7,32 @@
     "build": "next build",
     "dev": "next dev",
     "start": "serve out",
-    "types:check": "fumadocs-mdx && next typegen && tsc --noEmit",
-    "postinstall": "fumadocs-mdx",
+    "types:check": "next typegen && tsc --noEmit",
     "lint": "eslint"
   },
   "dependencies": {
-    "@orama/orama": "^3.1.18",
-    "fumadocs-core": "16.10.2",
-    "fumadocs-mdx": "15.0.12",
-    "fumadocs-ui": "16.10.2",
-    "lucide-react": "^1.17.0",
-    "next": "16.3.5",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "tailwind-merge": "^3.6.0"
+    "cn": "^0.4.0",
+    "fumadocs-core": "16.16.2",
+    "fumadocs-mdx": "15.4.6",
+    "fumadocs-ui": "npm:@fumadocs/base-ui@16.16.2",
+    "lucide-react": "^1.50.0",
+    "next": "16.3.8",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.3.0",
+    "@tailwindcss/postcss": "^4.3.3",
     "@types/mdx": "^2.0.14",
-    "@types/node": "^25.9.2",
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
+    "@types/node": "^26.6.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "eslint": "^9.39.4",
-    "eslint-config-next": "16.2.9",
+    "eslint-config-next": "16.3.8",
     "eslint-config-prettier": "^10.1.8",
-    "postcss": "^8.5.15",
+    "postcss": "^8.5.28",
     "prettier": "3.8.3",
     "serve": "^14.2.6",
-    "tailwindcss": "^4.3.0",
-    "typescript": "^6.0.3"
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2"
   }
 }
