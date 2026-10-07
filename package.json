@@ -14,5 +14,12 @@
   },
   "workspaces": [
     "docs"
-  ]
+  ],
+  "overrides": {
+    "@kflared/docs" : {
+      "serve": {
+        "compression": "1.8.2"
+      }
+    }
+  }
 }
