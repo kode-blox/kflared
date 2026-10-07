@@ -13,7 +13,7 @@ Cloudflare edge
   -> workload Services
 ```
 
-See the [KFlared documentation](https://kflared.kodeblox.com), [architecture](docs/content/docs/architecture.md), and [security model](SECURITY.md) before operating the controller.
+See the [KFlared documentation](https://kflared.kodeblox.com), [architecture](docs/content/docs/architecture.md), and [security model](docs/content/docs/security.md) before operating the controller.
 
 ## MVP scope
 
@@ -29,68 +29,27 @@ GRPCRoute, wildcard hostnames, HTTPS origins, direct Service backend routing, sh
 
 `CloudflareTunnelPrivateRoute` is a separate API for private CIDR routing. It targets a referenced Service's current ClusterIP as a single `/32` route and does not configure public hostnames or HTTPRoutes. See the [private route configuration](docs/content/docs/configuration.md#cloudflaretunnelprivateroute) and [architecture](docs/content/docs/architecture.md#private-network-route). Cloudflare One client enrollment/access policy and the user's Kubernetes credentials remain external prerequisites.
 
-## Prerequisites
+## Get started
 
-- Kubernetes 1.35-1.37
-- Gateway API v1.6.1 CRDs
-- Traefik 3.7.10+ with Kubernetes Gateway provider enabled
-- a normal internal `ClusterIP` Traefik origin Service (dedicated single-port Service recommended)
-- a Cloudflare account API token with only Cloudflare Tunnel/Connector write access required for the selected account
-- optional ExternalDNS and its `externaldns.k8s.io/v1alpha1` DNSEndpoint CRD
-- optional External Secrets Operator and a `ClusterSecretStore` when using the chart's ExternalSecret integration
+Follow [Installation](https://kflared.kodeblox.com/installation) to select a release, install the controller, supply account credentials, and verify the traffic path. Then use [Configuration](https://kflared.kodeblox.com/configuration) for providers, public hostname bindings, and private Service routes. The examples in [config/samples](config/samples) must be adapted to the actual account, Gateway, Service, and namespace authorization.
 
-The token does not need DNS edit permission. Put it only in `kflared`; the controller has no cluster-wide Secret permission:
+Public hostname bindings need Gateway API, Traefik, and an internal origin Service; private routes need an enrolled Cloudflare One client and explicit network access policy. ExternalDNS and External Secrets Operator are optional integrations. The controller's Cloudflare token does not need DNS edit access.
 
-```sh
-kubectl -n kflared create secret generic cloudflare-api-token \
-  --from-literal=api-token='<CLOUDFLARE_API_TOKEN>'
-```
+Read [Architecture](https://kflared.kodeblox.com/architecture) and [Security](https://kflared.kodeblox.com/security) before authorizing tenant namespaces or exposing private Services. Root [SECURITY.md](SECURITY.md) defines supported versions and private vulnerability reporting.
 
-Helm users can instead opt in to the chart's `externalSecrets` values. The chart then creates an `ExternalSecret` targeting `cloudflare-api-token`; External Secrets Operator and the referenced `ClusterSecretStore` must already exist.
-
-## Install and configure
-
-Kustomize is the canonical manifest source. Install prerequisites first, then build and deploy an image:
-
-Project automation requires Go and PowerShell 7 or newer. Task is pinned in the isolated `tools/task` module and does not need to be installed globally. Run tasks through the repository-local wrapper, for example `./task.ps1 --list` (PowerShell: `.\\task.ps1 --list`).
-
-```powershell
-./task.ps1 docker-build docker-push IMG=<registry>/kflared:<tag>
-./task.ps1 install
-./task.ps1 deploy IMG=<registry>/kflared:<tag>
-```
-
-The checked-in Kustomize manager manifest and Helm chart default to the `kflared` controller class. Set `spec.controller: kflared` on each provider and binding it owns. Override the chart's `controllerClass` when running multiple KFlared installations in one cluster, and use the matching value in their resources.
-
-Create a provider, label an allowed tenant namespace, and create a binding. Adapt the examples under [`config/samples`](config/samples) to the actual account ID, DNS zones, Gateway, listener, and Traefik Service.
-
-The binding keeps its Gateway and eligible HTTPRoutes in its application namespace. Its `originServiceRef` may point to a Service in another namespace if that Service namespace contains a matching Gateway API `ReferenceGrant`. KFlared checks this custom reference during reconciliation; Kubernetes does not automatically enforce it, and the grant does not provide network access. Revoking authorization deprograms the tunnel and removes managed DNS. Since grants cannot authorize a particular port, use a dedicated single-port `ClusterIP` origin Service. Origin selection is per binding, allowing one provider to serve multiple origins, multiple providers to share an origin, and incremental blue-green migration.
-
-```sh
-kubectl apply -f config/samples/kflared_v1alpha1_clustercloudflareprovider.yaml
-kubectl label namespace my-app kflared.kodeblox.com/cloudflare-provider=default
-kubectl -n my-app apply -f config/samples/kflared_v1alpha1_cloudflaretunnelbinding.yaml
-```
-
-Inspect conditions and DNS requirements:
-
-```sh
-kubectl get clustercloudflareproviders
-kubectl -n my-app get cloudflaretunnelbindings -o yaml
-```
-
-`spec.dnsAutomationEnabled` defaults to `true`. When enabled but the DNSEndpoint CRD is unavailable, `status.dnsRecords` is authoritative and `DNSAutomationReady=False` reports `ManualConfigurationRequired`. The MVP intentionally cannot acknowledge or verify manually managed DNS, so `Ready` remains false. Set the field to `false` when the public hostname must retain another DNS target; KFlared then removes any binding-owned `DNSEndpoint`, does not prescribe replacement CNAMEs, and treats the intentional opt-out as ready.
+For an existing deployment, [Operations](https://kflared.kodeblox.com/operations) covers status, DNS modes, grants, and cleanup. For contribution and delivery, read [Language and foundations](https://kflared.kodeblox.com/language-and-foundations), [Testing](https://kflared.kodeblox.com/testing), and [Release process](https://kflared.kodeblox.com/release-process).
 
 ## Development
 
-The module targets Go 1.27.0, controller-runtime v0.25.0, Gateway API v1.6.1, and `cloudflare-go/v7` v7.8.0. On this workstation, invoke the existing versioned executable and do not alter the default Go installation:
+The module targets Go 1.27.0, controller-runtime v0.25.0, Gateway API v1.6.1, and `cloudflare-go/v7` v7.8.0. Use the Go version declared in `go.mod` and PowerShell 7 or newer for the repository-local Task wrapper. Task is pinned in `tools/task` and needs no global installation:
 
-```sh
-go1.27.0 test ./...
-go1.27.0 build ./cmd
+```powershell
+./task.ps1 --list
+./task.ps1 test
+./task.ps1 build
 ```
 
-Generated code and manifests remain Kubebuilder-controlled. Use the pinned controller-gen version from `Taskfile.yaml` and verify the resulting diff. See [testing](docs/content/docs/testing.md).
+Generated code and manifests remain Kubebuilder-controlled. Use the pinned controller-gen version from `Taskfile.yaml` and verify the resulting diff. See [testing](docs/content/docs/testing.md) for automated coverage and manual external-service gates. The [docs README](docs/README.md) describes local website authoring and validation.
 
 The supported Helm chart is rooted at [`charts`](charts). It combines the current Helm starter structure with the controller resources derived from Kubebuilder's Kustomize output. Its plain CRDs live in Helm's special `charts/crds/` directory; pass `--include-crds` when rendering the complete chart.
 

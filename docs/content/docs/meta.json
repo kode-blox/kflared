@@ -4,12 +4,13 @@
     "---Get started---",
     "installation",
     "configuration",
-    "---Understand KFlared---",
+    "---Understand the system---",
     "architecture",
     "security",
     "language-and-foundations",
     "---Operate and develop---",
     "operations",
-    "testing"
+    "testing",
+    "release-process"
   ]
 }

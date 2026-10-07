@@ -5,22 +5,6 @@ description: Observe KFlared, manage DNS, and understand deletion and failure be
 
 KFlared uses standard Kubernetes status conditions and owner references. Start every operational check with the provider, binding, and generated connector resources rather than with Cloudflare alone.
 
-For private network routes, inspect the route and its referenced Service:
-
-```sh
-kubectl -n kflared get cloudflaretunnelprivateroutes
-kubectl -n kflared get cloudflaretunnelprivateroute kubernetes-api -o yaml
-kubectl -n default get service kubernetes -o wide
-```
-
-Private-route status reports its Cloudflare route ID, resolved `/32` network, tunnel ID, generated resource names, and readiness conditions. Confirm that the network matches the Service's current ClusterIP. If a cross-namespace reference is rejected, verify the `ReferenceGrant` source kind and namespace in the Service namespace. Cloudflare One enrollment and access policy remain administrator-managed prerequisites. Follow Cloudflare's [CIDR route client setup](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/private-net/cloudflared/connect-cidr/): include the route in client Split Tunnels and apply explicit allow policies for intended identities and destination ports, followed by a catch-all private-network block. In particular, avoid leaving all enrolled devices with unrestricted access to the cluster Service IP.
-
-For local `kubectl`, copy an authorized kubeconfig and set its cluster `server` to `https://<Service-ClusterIP>:<Service-port>`. Keep its Kubernetes user credentials and trusted certificate authority. If the API server certificate does not contain the ClusterIP as a subject alternative name, set kubeconfig `tls-server-name` to a DNS name that the certificate does contain; Kubernetes [defines that field for certificate validation](https://kubernetes.io/docs/reference/config-api/kubeconfig.v1/). Do not disable TLS verification. If the Service ClusterIP changes, update the kubeconfig server address after the route reports its new `/32`. Finally, use the enrolled WARP client and run a read-only `kubectl get --raw=/readyz` before normal commands. KFlared does not create or distribute kubeconfigs.
-
-If the condition reason is `RouteConflict`, check whether an older route resource under the same provider already targets that `/32`. KFlared preserves that existing owner and does not take over a Cloudflare route whose route ID/comment does not match the resource's recorded ownership.
-
-After installing a release that introduces this feature, operators must apply the updated CRD and controller image through their normal release process, then create the provider and `CloudflareTunnelPrivateRoute`. For the built-in Kubernetes API Service, adapt the Service namespace and port to the target cluster. Validate route status and client access in an isolated client session before relying on the route. These are operator-run rollout steps; KFlared does not mutate a live cluster or Cloudflare account during installation.
-
 ## Observe provider and binding health
 
 ```sh
@@ -69,12 +53,32 @@ Use a dedicated single-port internal `ClusterIP` origin Service. Grants cannot c
 
 When upgrading from a v1alpha1 release that used `spec.gatewayServiceRef`, update manifests to `spec.originServiceRef`; the alpha rename has no legacy-field alias. If stored bindings exist, pause the old controller, install the new CRD, apply the rewritten bindings, and only then start the new controller. This avoids either controller observing a field it does not understand.
 
+## Private network routes
+
+For private network routes, inspect the route and its referenced Service:
+
+```sh
+kubectl -n kflared get cloudflaretunnelprivateroutes
+kubectl -n kflared get cloudflaretunnelprivateroute kubernetes-api -o yaml
+kubectl -n default get service kubernetes -o wide
+```
+
+Private-route status reports its Cloudflare route ID, resolved `/32` network, tunnel ID, generated resource names, and readiness conditions. Confirm that the network matches the Service's current ClusterIP. If a cross-namespace reference is rejected, verify the `ReferenceGrant` source kind and namespace in the Service namespace. Cloudflare One enrollment and access policy remain administrator-managed prerequisites. Follow Cloudflare's [CIDR route client setup](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/private-net/cloudflared/connect-cidr/): include the route in client Split Tunnels and apply explicit allow policies for intended identities and destination ports, followed by a catch-all private-network block. In particular, avoid leaving all enrolled devices with unrestricted access to the cluster Service IP.
+
+For local `kubectl`, copy an authorized kubeconfig and set its cluster `server` to `https://<Service-ClusterIP>:<Service-port>`. Keep its Kubernetes user credentials and trusted certificate authority. If the API server certificate does not contain the ClusterIP as a subject alternative name, set kubeconfig `tls-server-name` to a DNS name that the certificate does contain; Kubernetes [defines that field for certificate validation](https://kubernetes.io/docs/reference/config-api/kubeconfig.v1/). Do not disable TLS verification. If the Service ClusterIP changes, update the kubeconfig server address after the route reports its new `/32`. Finally, use the enrolled WARP client and run a read-only `kubectl get --raw=/readyz` before normal commands. KFlared does not create or distribute kubeconfigs.
+
+If the condition reason is `RouteConflict`, check whether an older route resource under the same provider already targets that `/32`. KFlared preserves that existing owner and does not take over a Cloudflare route whose route ID/comment does not match the resource's recorded ownership.
+
+After installing a release that introduces this feature, operators must apply the updated CRD and controller image through their normal release process, then create the provider and `CloudflareTunnelPrivateRoute`. For the built-in Kubernetes API Service, adapt the Service namespace and port to the target cluster. Validate route status and client access in an isolated client session before relying on the route. These are operator-run rollout steps; once resources are applied, the running controller creates and reconciles their Kubernetes and Cloudflare state.
+
 ## Deletion
 
-`spec.deletionPolicy` controls the remote tunnel only:
+For public bindings, `spec.deletionPolicy` controls the remote tunnel:
 
 - `Delete` removes managed DNS and connector resources, then deletes the remote tunnel.
 - `Retain` removes managed Kubernetes resources but leaves the remote tunnel and its remote configuration intact.
+
+For private routes, `Delete` also removes the owned Cloudflare CIDR route before deleting the tunnel; `Retain` leaves both remote resources and removes generated Kubernetes resources. Ownership checks prevent deleting a route whose identity no longer matches the resource.
 
 Manual DNS cannot be removed by KFlared. Remove surviving records deliberately; a CNAME that points to a deleted tunnel can produce Cloudflare error 1016.
 
@@ -87,4 +91,8 @@ kubectl logs -n kflared \
   --follow
 ```
 
-Use the actual Helm release name if it changes the Deployment prefix. Reconciliation errors use controller-runtime backoff; stable validation failures are represented in conditions and periodically rechecked without error storms.
+For the default Helm release, use `deployment/kflared`; adjust it to the rendered fullname when overriding names. Reconciliation errors use controller-runtime backoff; stable validation failures are represented in conditions and periodically rechecked without error storms.
+
+Before removing a controller installation, delete or migrate all referencing bindings and private routes while the manager is still running so finalizers can finish. A chart-managed provider cannot finalize while either resource kind still references it.
+
+For upgrades, follow [Installation](/installation#upgrading-existing-installations); for artifact publication and version changes, use [Release process](/release-process).

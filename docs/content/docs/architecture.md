@@ -5,7 +5,7 @@ description: Understand KFlared's integration boundary, traffic path, and owners
 
 `ClusterCloudflareProvider` describes an account trust boundary. `CloudflareTunnelBinding` binds one listener of one Traefik-managed Gateway to one controller-owned, remotely managed Cloudflare Tunnel. `CloudflareTunnelPrivateRoute` separately connects an enrolled Cloudflare One client to one Kubernetes Service through a Cloudflare private network route. A Gateway does not represent a tunnel in either integration mode.
 
-Each KFlared manager requires a non-empty controller class, and the Helm chart defaults it to `kflared`. Providers and bindings declare that class in `spec.controller`; the manager reconciles only exact matches, and a binding must also reference a provider with the same class. This allows separately configured KFlared instances to coexist in one cluster. Additional installations must override the default with distinct classes. The class is immutable on each resource, so migration between instances requires recreating resources.
+Each KFlared manager requires a non-empty controller class, and the Helm chart defaults it to `kflared`. Providers, bindings, and private routes declare that class in `spec.controller`; the manager reconciles only exact matches, and a binding must also reference a provider with the same class. This allows separately configured KFlared instances to coexist in one cluster. Additional installations must override the default with distinct classes. The class is immutable on each resource, so migration between instances requires recreating resources.
 
 Leader-election lease names are derived from the controller class, so different classes do not suppress each other when they share a namespace. Finalizer names remain stable rather than embedding the class. The manager checks the immutable class before any finalization work, generated Kubernetes children are identified by the binding UID, and cleanup refuses to delete a child carrying another binding's ownership label. Remote tunnel names also include the binding UID. Together these boundaries prevent one class from adopting or cleaning up another class's resources while avoiding class-derived finalizer names that could strand objects after configuration changes.
 
@@ -33,7 +33,7 @@ ingress:
   - service: http_status:404
 ```
 
-It deploys official cloudflared connectors in `kflared` (one by default, or more when requested). By default, every hostname targets `<tunnel-id>.cfargotunnel.com` through a binding-owned `DNSEndpoint`. Without that CRD, exact records remain visible in binding status for manual administration. A binding can disable DNS automation when its public hostname must retain an externally managed target; the tunnel hostname remains programmed for alternate Cloudflare edge paths without asserting public CNAME intent.
+It deploys official cloudflared connectors in the manager's system namespace (`kflared` by default) (one by default, or more when requested). By default, every hostname targets `<tunnel-id>.cfargotunnel.com` through a binding-owned `DNSEndpoint`. Without that CRD, exact records remain visible in binding status for manual administration. A binding can disable DNS automation when its public hostname must retain an externally managed target; the tunnel hostname remains programmed for alternate Cloudflare edge paths without asserting public CNAME intent.
 
 The controller continuously compares desired and observed state. Kubernetes watches trigger prompt reconciliation; controller-runtime exponential backoff handles errors, while stable validation conditions use periodic requeues without error storms.
 
@@ -58,20 +58,22 @@ The route covers the Service IP independent of port. `serviceRef.port` confirms 
 
 ## Ownership boundaries
 
-| Resource                                             | Owner             | Controller action                          |
-| ---------------------------------------------------- | ----------------- | ------------------------------------------ |
-| Cloudflare account                                   | Administrator     | Reference only                             |
-| DNS zone                                             | Administrator     | Allow-list only                            |
-| Tunnel and complete ingress config                   | Binding           | Create, recover, repair, delete or retain  |
-| Connector Deployment and token Secret               | Binding           | Create, repair, delete                     |
+| Resource                                             | Owner             | Controller action                                                              |
+| ---------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------ |
+| Cloudflare account                                   | Administrator     | Reference only                                                                 |
+| DNS zone                                             | Administrator     | Allow-list only                                                                |
+| Tunnel and complete ingress config                   | Binding           | Create, recover, repair, delete or retain                                      |
+| Connector Deployment and token Secret                | Binding           | Create, repair, delete                                                         |
 | DNSEndpoint                                          | Binding           | Create and repair when enabled; delete when disabled or the binding is deleted |
-| GatewayClass, Gateway, HTTPRoute, and ReferenceGrant | Traefik and users | Read only; grants are checked for cross-namespace origins |
-| Traefik Service                                      | Administrator     | Read only                                  |
-| Cloudflare CIDR route (`<Service ClusterIP>/32`)      | PrivateRoute      | Create, adopt only when ownership is proven, update and delete or retain |
-| PrivateRoute connector Deployment and token Secret    | PrivateRoute      | Create, repair, delete                     |
+| GatewayClass, Gateway, HTTPRoute, and ReferenceGrant | Traefik and users | Read only; grants are checked for cross-namespace origins                      |
+| Traefik Service                                      | Administrator     | Read only                                                                      |
+| Cloudflare CIDR route (`<Service ClusterIP>/32`)     | PrivateRoute      | Create, adopt only when ownership is proven, update and delete or retain       |
+| PrivateRoute connector Deployment and token Secret   | PrivateRoute      | Create, repair, delete                                                         |
 
-Tunnel names include the cluster identity and complete binding UID. A lost create response can therefore be recovered without adopting a name belonging to another Kubernetes object. Cloudflare's tunnel API does not expose arbitrary controller ownership metadata, so exact deterministic identity, remote-management mode, immutable provider and Gateway identity, and the persisted tunnel ID form the adoption boundary.
+Tunnel names include the cluster identity and complete resource UID. A lost create response can therefore be recovered without adopting a name belonging to another Kubernetes object. Cloudflare's tunnel API does not expose arbitrary controller ownership metadata, so exact deterministic identity, remote-management mode, immutable provider and Gateway identity, and the persisted tunnel ID form the adoption boundary.
 
 ## MVP boundary
 
 The first release is an integration controller, not a Gateway API implementation. GRPCRoute, wildcard hostnames, HTTPS origins, direct Service backend routing, shared or imported tunnels, externally managed connectors, and native GatewayClass ownership are deferred.
+
+Use [Security](/security) to review the trust boundaries behind this ownership model, [Configuration](/configuration) to express it in resources, and [Language and foundations](/language-and-foundations) for the implementation stack.
