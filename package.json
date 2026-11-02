@@ -16,7 +16,7 @@
     "docs"
   ],
   "overrides": {
-    "@kflared/docs" : {
+    "@kflared/docs": {
       "serve": {
         "compression": "1.8.2"
       }
