@@ -18,7 +18,7 @@ vars:
   GOLANGCI_LINT: '{{.GOLANGCI_LINT | default (printf "%s/golangci-lint%s" .LOCALBIN (exeExt))}}'
   KUSTOMIZE_VERSION: '{{.KUSTOMIZE_VERSION | default "v5.8.1"}}'
   CONTROLLER_TOOLS_VERSION: '{{.CONTROLLER_TOOLS_VERSION | default "v0.22.0"}}'
-  GOLANGCI_LINT_VERSION: '{{.GOLANGCI_LINT_VERSION | default "v2.13.2"}}'
+  GOLANGCI_LINT_VERSION: '{{.GOLANGCI_LINT_VERSION | default "v2.15.0"}}'
   KIND_VERSION: '{{.KIND_VERSION | default "v0.33.0"}}'
 
 tasks:
