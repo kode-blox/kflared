@@ -82,6 +82,17 @@ jobs:
       contents: read
       security-events: write
 
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+          - language: go
+            build-mode: autobuild
+          - language: javascript-typescript
+            build-mode: none
+
     steps:
       - name: Checkout and install dependencies
         uses: SayakMukhopadhyay/github-actions/checkout-dependencies@v1
@@ -92,8 +103,8 @@ jobs:
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
-          languages: go
-          build-mode: autobuild
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
 
       - name: Analyze
         uses: github/codeql-action/analyze@v4
