@@ -2,6 +2,7 @@
   "name": "@kode-blox/kflared",
   "version": "0.0.0",
   "description": "Gateway controller for Cloudflare Tunnel.",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "repository": {
