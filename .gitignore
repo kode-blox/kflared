@@ -263,4 +263,3 @@ charts/*.tgz
 # Documentation application artifacts
 docs/.source/
 docs/next-env.d.ts
-docs/tsconfig.tsbuildinfo
