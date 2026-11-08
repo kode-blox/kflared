@@ -1,5 +1,5 @@
 {
-  "name": "kflared",
+  "name": "@kode-blox/kflared",
   "version": "0.0.0",
   "description": "Gateway controller for Cloudflare Tunnel.",
   "private": true,
@@ -16,7 +16,7 @@
     "docs"
   ],
   "overrides": {
-    "@kflared/docs": {
+    "@kode-blox/kflared-docs": {
       "serve": {
         "compression": "1.8.2"
       }

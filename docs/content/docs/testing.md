@@ -70,9 +70,9 @@ These are operator-run checks, not automated release workflow gates. Follow [Ins
 Use the existing root npm workspace installation. From the repository root:
 
 ```sh
-npm run lint --workspace @kflared/docs
-npm run types:check --workspace @kflared/docs
-npm run build --workspace @kflared/docs
+npm run lint --workspace @kode-blox/kflared-docs
+npm run types:check --workspace @kode-blox/kflared-docs
+npm run build --workspace @kode-blox/kflared-docs
 ```
 
 The static export is in `docs/out`. Check the landing-page entry points and sidebar, page links, `/api/search`, `/llms.txt`, `/llms-full.txt`, and `/llms.mdx/docs/<page>/content.md` after adding or reorganizing pages. [Release process](/release-process) explains which changes select documentation publication.
