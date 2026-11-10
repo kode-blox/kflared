@@ -1,13 +1,11 @@
-import { createMDX } from "fumadocs-mdx/next";
-import { PHASE_DEVELOPMENT_SERVER } from "next/constants.js";
+import { createMDX } from 'fumadocs-mdx/next';
 
 const withMDX = createMDX();
 
-export default function config(phase) {
-  const isDevelopmentServer = phase === PHASE_DEVELOPMENT_SERVER;
+/** @type {import('next').NextConfig} */
+const config = {
+  output: 'export',
+  reactStrictMode: true,
+};
 
-  return withMDX({
-    reactStrictMode: true,
-    ...(isDevelopmentServer ? {} : { output: "export" }),
-  });
-}
+export default withMDX(config);

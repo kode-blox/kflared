@@ -32,9 +32,9 @@ Use this exact shared Security outline, retaining verified KFlared-specific cont
 
 Protected assets is a bullet list. Trust boundaries is a table with columns `Boundary` and `Security requirement`. Controls documents enforced behavior; accepted limitations describes actual risks and external responsibilities. Further reading links to the canonical repository policy and Configuration, Operations, and Testing. Keep reporting/support policy in root `SECURITY.md` and automated coverage/manual integration discussion in Testing.
 
-The documentation website uses the official `fumadocs-mdx` content source, Fumadocs Core and UI, and a statically exported Next.js application. Authored documentation lives in `content/docs`. Collections are defined through the MDX Macro API in `lib/source.ts`, with lazy bodies and processed Markdown enabled. No separate collection-codegen step or `collections/*` alias is needed.
+The documentation website uses `fumadocs-mdx`, Fumadocs Core and UI, and a statically exported Next.js application. Authored documentation lives in `content/docs`. The MDX Macro API defines collections in `lib/source.ts`. Pages render their compiled MDX directly, and processed Markdown supplies the text exports. [MDX Macro API guide](https://fumadocs.dev/docs/mdx/macro)
 
-`fumadocs-ui` aliases `@fumadocs/base-ui`; search uses the static Fumadocs client. Shared Markdown and Open Graph URL helpers live in `lib/shared.ts`.
+`fumadocs-ui` aliases `@fumadocs/base-ui`. The search dialog uses `useStaticSearch` to query the exported index at `/api/search`. Shared Markdown and Open Graph URL helpers live in `lib/shared.ts`.
 
 The landing page and documentation pages use Fumadocs layouts, documentation pages expose copy and source-view controls, and the static export includes search, Open Graph images, and machine-readable Markdown routes.
 
@@ -52,6 +52,8 @@ npm run lint --workspace @kode-blox/kflared-docs
 npm run types:check --workspace @kode-blox/kflared-docs
 npm run build --workspace @kode-blox/kflared-docs
 ```
+
+`types:check` generates the Next.js route types before running the TypeScript 7 compiler. ESLint loads the TypeScript 6 compatibility API through the `typescript` package alias.
 
 The production site is designed to be served from the root of `https://kflared.kodeblox.com/`.
 

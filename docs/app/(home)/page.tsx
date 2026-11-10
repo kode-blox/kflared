@@ -1,5 +1,5 @@
-import Link from "next/link";
-import Image from "next/image";
+import Link from 'next/link';
+import Image from 'next/image';
 
 export default function HomePage() {
   return (
@@ -31,15 +31,15 @@ export default function HomePage() {
           </Link>
         </div>
         <p className="text-sm text-fd-muted-foreground">
-          Already running KFlared?{" "}
+          Already running KFlared?{' '}
           <Link href="/operations" className="underline">
             Observe and troubleshoot it
           </Link>
-          . Contributing? Start with{" "}
+          . Contributing? Start with{' '}
           <Link href="/testing" className="underline">
             testing
-          </Link>{" "}
-          and the{" "}
+          </Link>{' '}
+          and the{' '}
           <Link href="/release-process" className="underline">
             release process
           </Link>
