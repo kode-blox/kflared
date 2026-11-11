@@ -42,7 +42,11 @@ helm upgrade --install kflared ./charts \
 
 `controllerClass` defaults to `kflared`. Use that value as `spec.controller` on every provider and binding assigned to the installation. Override it with a stable, distinct value for each additional KFlared installation in the same cluster.
 
-> **Warning:** Never run two KFlared installations with the same controller class. They would select the same resources even when installed in different namespaces. A second installation must set a distinct value, for example `--set controllerClass=kflared-secondary`, and its providers and bindings must use that same value.
+<Callout type="warn">
+
+**Warning:** Never run two KFlared installations with the same controller class. They would select the same resources even when installed in different namespaces. A second installation must set a distinct value, for example `--set controllerClass=kflared-secondary`, and its providers and bindings must use that same value.
+
+</Callout>
 
 KFlared CRDs live in Helm's special `crds/` directory. Helm installs them before templates and deliberately does not upgrade or delete them. Use `--skip-crds` only when a cluster administrator manages the CRDs separately.
 
@@ -114,7 +118,11 @@ clusterCloudflareProvider:
 
 `accountID` is required when enabled. Set `allowedDNSZones` to one or more concrete zones for published hostnames, or `[]` for a private-route-only provider. `apiTokenSecretRef.name` is optional: it defaults to `externalSecrets.targetSecretName`, so the same rendered provider works with either a manually created Secret or the chart's optional `ExternalSecret`. The key defaults to `api-token` and must match the generated or manually managed Secret key.
 
-> **Warning:** `bindingNamespaceSelector: {}` intentionally permits bindings from every namespace. Use a namespace-label selector for a shared cluster.
+<Callout type="warn">
+
+**Warning:** `bindingNamespaceSelector: {}` intentionally permits bindings from every namespace. Use a namespace-label selector for a shared cluster.
+
+</Callout>
 
 Save optional chart settings in a values file and add `--values kflared-values.yaml` to the installation command, keeping the selected image tag. If using the chart-managed provider, skip the separate provider sample below and match its name and namespace selector in your bindings or private routes.
 

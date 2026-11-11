@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import Image from 'next/image';
+import { buttonVariants } from 'fumadocs-ui/components/ui/button';
 
 export default function HomePage() {
   return (
@@ -19,13 +20,13 @@ export default function HomePage() {
         <div className="flex flex-wrap justify-center gap-3">
           <Link
             href="/installation"
-            className="inline-flex h-10 items-center rounded-md bg-fd-primary px-4 text-sm font-medium text-fd-primary-foreground transition-colors hover:bg-fd-primary/90"
+            className={buttonVariants({ variant: 'primary', className: 'h-10 px-4' })}
           >
             Get started
           </Link>
           <Link
             href="/architecture"
-            className="inline-flex h-10 items-center rounded-md border px-4 text-sm font-medium transition-colors hover:bg-fd-accent hover:text-fd-accent-foreground"
+            className={buttonVariants({ variant: 'outline', className: 'h-10 px-4' })}
           >
             Understand the system
           </Link>

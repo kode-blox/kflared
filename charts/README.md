@@ -18,7 +18,7 @@ helm upgrade --install kflared ./charts \
 
 > **Warning:** Never run two KFlared installations with the same controller class. A second installation must set a distinct value, for example `--set controllerClass=kflared-secondary`, and its providers and bindings must use that same value.
 
-When upgrading resources created before controller classes existed, do not rely on `helm upgrade` to update the CRDs. Follow the ordered CRD sync, resource backfill, verification, and controller rollout procedure in the [main installation documentation](../docs/content/docs/installation.md#upgrade-from-a-release-without-controller-classes).
+When upgrading resources created before controller classes existed, do not rely on `helm upgrade` to update the CRDs. Follow the ordered CRD sync, resource backfill, verification, and controller rollout procedure in the [main installation documentation](../docs/content/docs/installation.mdx#upgrade-from-a-release-without-controller-classes).
 
 The chart supports another release namespace. The controller discovers it through the Pod downward API and keeps Cloudflare credentials and generated connector resources in that namespace.
 
