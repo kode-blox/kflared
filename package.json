@@ -15,12 +15,5 @@
   },
   "workspaces": [
     "docs"
-  ],
-  "overrides": {
-    "@kode-blox/kflared-docs": {
-      "serve": {
-        "compression": "1.8.2"
-      }
-    }
-  }
+  ]
 }
