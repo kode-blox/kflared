@@ -19,6 +19,22 @@
             </SchemaInfo>
           </value>
         </entry>
+        <entry key="Taskfile config">
+          <value>
+            <SchemaInfo>
+              <option name="name" value="Taskfile config" />
+              <option name="relativePathToSchema" value="https://taskfile.dev/schema.json" />
+              <option name="applicationDefined" value="true" />
+              <option name="patterns">
+                <list>
+                  <Item>
+                    <option name="path" value="Taskfile.yaml" />
+                  </Item>
+                </list>
+              </option>
+            </SchemaInfo>
+          </value>
+        </entry>
         <entry key="package.json">
           <value>
             <SchemaInfo>
