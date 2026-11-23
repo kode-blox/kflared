@@ -54,7 +54,7 @@ import (
 const (
 	bindingFinalizer                = "kflared.kodeblox.com/tunnel-cleanup"
 	traefikControllerName           = "traefik.io/gateway-controller"
-	defaultCloudflaredImage         = "cloudflare/cloudflared:2026.8.3"
+	defaultCloudflaredImage         = "cloudflare/cloudflared:2026.11.2"
 	ownerUIDLabel                   = "kflared.kodeblox.com/binding-uid"
 	managedByLabel                  = "app.kubernetes.io/managed-by"
 	managedByValue                  = "kflared"
