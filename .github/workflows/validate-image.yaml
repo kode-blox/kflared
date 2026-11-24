@@ -1,10 +1,10 @@
-name: Validate Container
+name: Validate Image
 
 on:
   workflow_call:
     inputs:
       application-version:
-        description: Validated application version embedded in the container metadata
+        description: Validated application version embedded in image metadata
         required: true
         type: string
 
@@ -12,15 +12,15 @@ permissions: {}
 
 jobs:
   validate:
-    name: Validate container build
+    name: Validate image build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
 
     steps:
-      - name: Build disposable container
-        uses: SayakMukhopadhyay/github-actions/container-build-push@v1
+      - name: Build image without publishing
+        uses: SayakMukhopadhyay/github-actions/image-build-push@v1
         with:
           tag: build-${{ github.sha }}
           version: ${{ inputs.application-version }}

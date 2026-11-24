@@ -12,7 +12,7 @@ on:
         required: true
         type: boolean
       application-version:
-        description: Validated application version embedded in container metadata
+        description: Validated application version embedded in image metadata
         required: true
         type: string
       deploy:

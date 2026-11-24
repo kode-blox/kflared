@@ -17,7 +17,7 @@ on:
         type: string
         default: ""
       image-tag:
-        description: Optional KFlared container image tag
+        description: Optional KFlared image tag
         required: false
         type: string
         default: ""

@@ -12,16 +12,16 @@ on:
         required: true
         type: boolean
       application-version:
-        description: Validated application version embedded in container metadata
+        description: Validated application version embedded in image metadata
         required: true
         type: string
     outputs:
       image-tag:
-        description: Published development container tag, or empty when application delivery is not selected
-        value: ${{ jobs.publish-container.outputs.image-tag }}
+        description: Published development image tag, or empty when application delivery is not selected
+        value: ${{ jobs.publish-image.outputs.image-tag }}
       image-digest:
         description: Published image digest, or empty when application delivery is not selected
-        value: ${{ jobs.publish-container.outputs.image-digest }}
+        value: ${{ jobs.publish-image.outputs.image-digest }}
       chart-version:
         description: Published development chart version, or empty when chart delivery is not selected
         value: ${{ jobs.publish-chart.outputs.chart-version }}
@@ -29,8 +29,8 @@ on:
 permissions: {}
 
 jobs:
-  publish-container:
-    name: Publish container
+  publish-image:
+    name: Publish image
     if: inputs.deliver-application
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -38,13 +38,13 @@ jobs:
       contents: read
       packages: write
     outputs:
-      image-tag: ${{ steps.container.outputs.image-reference != '' && format('build-{0}', github.sha) || '' }}
-      image-digest: ${{ steps.container.outputs.image-digest }}
+      image-tag: ${{ steps.image.outputs.image-reference != '' && format('build-{0}', github.sha) || '' }}
+      image-digest: ${{ steps.image.outputs.image-digest }}
 
     steps:
-      - id: container
-        name: Build and publish container
-        uses: SayakMukhopadhyay/github-actions/container-build-push@v1
+      - id: image
+        name: Build and publish image
+        uses: SayakMukhopadhyay/github-actions/image-build-push@v1
         with:
           tag: build-${{ github.sha }}
           version: ${{ inputs.application-version }}

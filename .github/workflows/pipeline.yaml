@@ -44,14 +44,14 @@ jobs:
       id-token: write
     uses: $/.github/workflows/deliver-documentation.yaml
 
-  validate-container:
-    name: Validate Container
+  validate-image:
+    name: Validate Image
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     needs:
       - ci
     permissions:
       contents: read
-    uses: $/.github/workflows/validate-container.yaml
+    uses: $/.github/workflows/validate-image.yaml
     with:
       application-version: ${{ needs.ci.outputs.application-version }}
 

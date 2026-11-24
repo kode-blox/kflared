@@ -27,8 +27,8 @@ on:
 permissions: {}
 
 jobs:
-  promote-container:
-    name: Promote container
+  promote-image:
+    name: Promote image
     if: inputs.deliver-application
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -36,8 +36,8 @@ jobs:
       packages: write
 
     steps:
-      - name: Promote published container
-        uses: SayakMukhopadhyay/github-actions/container-promote@v1
+      - name: Promote published image
+        uses: SayakMukhopadhyay/github-actions/image-promote@v1
         with:
           source-digest: ${{ inputs.source-digest }}
           tag: ${{ inputs.application-version }}

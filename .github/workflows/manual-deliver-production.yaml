@@ -59,7 +59,7 @@ jobs:
       - id: application-artifact
         name: Inspect development image
         if: inputs.component == 'application' || inputs.component == 'both'
-        uses: SayakMukhopadhyay/github-actions/container-image-inspect@v1
+        uses: SayakMukhopadhyay/github-actions/image-inspect@v1
         with:
           tag: build-${{ github.sha }}
           registry: ghcr.io
