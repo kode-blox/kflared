@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -106,6 +107,79 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return f(request)
+}
+
+func TestSDKClientGetTunnelDistinguishesDeletedFromExisting(t *testing.T) {
+	const tunnelID = "test-tunnel"
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		want       *Tunnel
+		wantError  bool
+	}{
+		{
+			name:       "deleted object",
+			statusCode: http.StatusOK,
+			body:       `{"success":true,"result":{"id":"test-tunnel","deleted_at":"2026-11-26T12:00:00Z","status":"inactive"}}`,
+		},
+		{
+			name:       "existing local tunnel",
+			statusCode: http.StatusOK,
+			body:       `{"success":true,"result":{"id":"test-tunnel","name":"other","config_src":"local","deleted_at":null,"status":"down"}}`,
+			want:       &Tunnel{ID: tunnelID, Name: "other", ConfigSource: "local", Status: "down"},
+		},
+		{
+			name:       "existing tunnel without deletion field",
+			statusCode: http.StatusOK,
+			body:       `{"success":true,"result":{"id":"test-tunnel","name":"remote-tunnel","config_src":"cloudflare","status":"inactive"}}`,
+			want:       &Tunnel{ID: tunnelID, Name: "remote-tunnel", ConfigSource: ConfigSourceCloudflare, Status: "inactive"},
+		},
+		{
+			name:       "not found",
+			statusCode: http.StatusNotFound,
+			body:       `{"success":false,"errors":[{"code":1000,"message":"test failure"}]}`,
+		},
+		{
+			name:       "forbidden",
+			statusCode: http.StatusForbidden,
+			body:       `{"success":false,"errors":[{"code":1000,"message":"test failure"}]}`,
+			wantError:  true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &sdkClient{
+				api: cfapi.NewClient(
+					option.WithAPIToken("test-token"),
+					option.WithHTTPClient(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+						if req.Method != http.MethodGet || req.URL.Path != "/client/v4/accounts/"+testCloudflareAccountID+"/cfd_tunnel/"+tunnelID {
+							t.Errorf("unexpected tunnel request %s %s", req.Method, req.URL.Path)
+						}
+						return &http.Response{
+							StatusCode: tt.statusCode,
+							Header:     http.Header{"Content-Type": {"application/json"}},
+							Body:       io.NopCloser(strings.NewReader(tt.body)),
+						}, nil
+					})}),
+					option.WithMaxRetries(0),
+				),
+				accountID: testCloudflareAccountID,
+			}
+			tunnel, err := client.GetTunnel(t.Context(), tunnelID)
+			if tt.wantError {
+				var apiErr *cfapi.Error
+				if !errors.As(err, &apiErr) || apiErr.StatusCode != tt.statusCode {
+					t.Fatalf("GetTunnel() error = %v, want status %d", err, tt.statusCode)
+				}
+			} else if err != nil {
+				t.Fatalf("GetTunnel() error = %v", err)
+			}
+			if (tt.want == nil && tunnel != nil) || (tt.want != nil && (tunnel == nil || *tunnel != *tt.want)) {
+				t.Errorf("GetTunnel() = %#v, want %#v", tunnel, tt.want)
+			}
+		})
+	}
 }
 
 func TestSDKClientPrivateRoutes(t *testing.T) {

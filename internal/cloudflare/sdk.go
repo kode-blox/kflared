@@ -81,6 +81,9 @@ func (c *sdkClient) GetTunnel(ctx context.Context, id string) (*Tunnel, error) {
 		}
 		return nil, err
 	}
+	if !result.DeletedAt.IsZero() {
+		return nil, nil
+	}
 	return &Tunnel{ID: result.ID, Name: result.Name, ConfigSource: string(result.ConfigSrc), Status: string(result.Status)}, nil
 }
 

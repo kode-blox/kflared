@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -208,13 +210,6 @@ func verifyPrivateRouteTransitions(t *testing.T, state privateRouteTestState) {
 	if _, err := r.Reconcile(ctx, req); err != nil {
 		t.Fatalf("restore route after grant: %v", err)
 	}
-	cloudflare.tunnel = nil // Simulate deletion outside KFlared while its route remains.
-	if _, err := r.Reconcile(ctx, req); err != nil {
-		t.Fatalf("recover remotely deleted tunnel: %v", err)
-	}
-	if cloudflare.createCalls != 2 || cloudflare.createRouteCalls != 4 || cloudflare.deleteRouteCalls != 3 || len(cloudflare.privateRoutes) != 1 {
-		t.Fatalf("remote tunnel recovery did not replace the stale route: tunnels=%d createdRoutes=%d deletedRoutes=%d routes=%#v", cloudflare.createCalls, cloudflare.createRouteCalls, cloudflare.deleteRouteCalls, cloudflare.privateRoutes)
-	}
 	actualRoute := &kflaredv1alpha1.CloudflareTunnelPrivateRoute{}
 	if err := kube.Get(ctx, client.ObjectKeyFromObject(route), actualRoute); err != nil {
 		t.Fatal(err)
@@ -234,6 +229,153 @@ func verifyPrivateRouteTransitions(t *testing.T, state privateRouteTestState) {
 	if len(cloudflare.privateRoutes) != 1 || cloudflare.privateRoutes[0].Comment != privateComment(loser) {
 		t.Fatalf("winner deletion did not release route: %#v", cloudflare.privateRoutes)
 	}
+}
+
+func TestPrivateRouteReconcileRecoversMissingTunnelAndRollsConnector(t *testing.T) {
+	r, cloudflare, route := newPrivateRouteReconcilerWithTunnel(t)
+	ctx := t.Context()
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(route)}
+	connectorKey := client.ObjectKey{Namespace: defaultSystemNamespace, Name: privateResourceName(route.UID)}
+	before := &appsv1.Deployment{}
+	if err := r.Get(ctx, connectorKey, before); err != nil {
+		t.Fatal(err)
+	}
+	oldRouteID := route.Status.RouteID
+	oldTunnelID := route.Status.TunnelID
+	cloudflare.tunnel = nil
+	cloudflare.token = "replacement-connector-token"
+	if _, err := r.Reconcile(ctx, request); err != nil {
+		t.Fatalf("recover remotely deleted tunnel: %v", err)
+	}
+	if err := r.Get(ctx, request.NamespacedName, route); err != nil {
+		t.Fatal(err)
+	}
+	if route.Status.TunnelID == oldTunnelID || route.Status.TunnelID != testTunnelID || route.Status.RouteID == oldRouteID || route.Status.Network != testPrivateRouteNetwork {
+		t.Fatalf("status did not record the replacement tunnel and route: %#v", route.Status)
+	}
+	if cloudflare.createCalls != 1 || cloudflare.createRouteCalls != 2 || cloudflare.deleteRouteCalls != 1 || len(cloudflare.privateRoutes) != 1 {
+		t.Fatalf("recovery did not replace the stale route: tunnels=%d createdRoutes=%d deletedRoutes=%d routes=%#v", cloudflare.createCalls, cloudflare.createRouteCalls, cloudflare.deleteRouteCalls, cloudflare.privateRoutes)
+	}
+	created := &cloudflare.privateRoutes[0]
+	if created.ID != route.Status.RouteID || created.Network != route.Status.Network || !privateOwned(created, route) {
+		t.Fatalf("unexpected replacement route: %#v", created)
+	}
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, connectorKey, secret); err != nil {
+		t.Fatal(err)
+	}
+	if string(secret.Data["token"]) != cloudflare.token {
+		t.Fatal("connector Secret did not receive the replacement token")
+	}
+	after := &appsv1.Deployment{}
+	if err := r.Get(ctx, connectorKey, after); err != nil {
+		t.Fatal(err)
+	}
+	if equality.Semantic.DeepEqual(before.Spec.Template, after.Spec.Template) {
+		t.Fatal("connector pod template did not change with the replacement token")
+	}
+	encoded, err := json.Marshal(after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), cloudflare.token) {
+		t.Fatal("connector Deployment contains the token value")
+	}
+	if _, err := r.Reconcile(ctx, request); err != nil {
+		t.Fatalf("reconcile replacement again: %v", err)
+	}
+	current := &appsv1.Deployment{}
+	if err := r.Get(ctx, connectorKey, current); err != nil {
+		t.Fatal(err)
+	}
+	if current.ResourceVersion != after.ResourceVersion || !equality.Semantic.DeepEqual(current.Spec.Template, after.Spec.Template) {
+		t.Fatal("unchanged token caused another connector Deployment update")
+	}
+	if cloudflare.createCalls != 1 || cloudflare.createRouteCalls != 2 || cloudflare.deleteRouteCalls != 1 {
+		t.Fatal("reconciling the replacement repeated Cloudflare writes")
+	}
+}
+
+func TestPrivateRouteReconcileRefusesMismatchedIdentity(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		change    func(*fakeCloudflareClient)
+		wantError string
+	}{
+		{
+			name:      "existing tunnel with a different name",
+			change:    func(cloudflare *fakeCloudflareClient) { cloudflare.tunnel.Name = "other-tunnel" },
+			wantError: "refusing tunnel with incompatible identity",
+		},
+		{
+			name:      "existing tunnel with local config",
+			change:    func(cloudflare *fakeCloudflareClient) { cloudflare.tunnel.ConfigSource = "local" },
+			wantError: "refusing tunnel with incompatible identity",
+		},
+		{
+			name: "missing tunnel with a foreign recorded route",
+			change: func(cloudflare *fakeCloudflareClient) {
+				cloudflare.tunnel = nil
+				cloudflare.privateRoutes[0].Comment = "other owner"
+			},
+			wantError: "with mismatched identity",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r, cloudflare, route := newPrivateRouteReconcilerWithTunnel(t)
+			before := route.Status.DeepCopy()
+			tt.change(cloudflare)
+			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(route)}
+			_, err := r.Reconcile(t.Context(), request)
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("Reconcile() error = %v, want %q", err, tt.wantError)
+			}
+			if cloudflare.createCalls != 0 || cloudflare.deleteCalls != 0 || cloudflare.createRouteCalls != 1 || cloudflare.deleteRouteCalls != 0 {
+				t.Fatal("identity mismatch triggered Cloudflare writes")
+			}
+			if err := r.Get(t.Context(), request.NamespacedName, route); err != nil {
+				t.Fatal(err)
+			}
+			if route.Status.TunnelID != before.TunnelID || route.Status.TunnelName != before.TunnelName || route.Status.RouteID != before.RouteID || route.Status.Network != before.Network {
+				t.Fatalf("identity mismatch changed the tracked tunnel or route: %#v", route.Status)
+			}
+		})
+	}
+}
+
+func newPrivateRouteReconcilerWithTunnel(t *testing.T) (*CloudflareTunnelPrivateRouteReconciler, *fakeCloudflareClient, *kflaredv1alpha1.CloudflareTunnelPrivateRoute) {
+	t.Helper()
+	const clusterUID = "11111111-2222-3333-4444-555555555555"
+	provider := readyClusterProvider()
+	route := &kflaredv1alpha1.CloudflareTunnelPrivateRoute{
+		Name: testPrivateRouteName, Namespace: testTenantName, UID: "12345678-1234-1234-1234-123456789abc", Generation: 1, Finalizers: []string{privateFinalizer},
+		Spec: kflaredv1alpha1.CloudflareTunnelPrivateRouteSpec{
+			Controller:  testControllerClass,
+			ProviderRef: kflaredv1alpha1.LocalReference{Name: provider.Name},
+			ServiceRef:  kflaredv1alpha1.PrivateRouteServiceReference{Name: testKubernetesServiceName, Port: intstr.FromInt32(443)},
+		},
+	}
+	service := &corev1.Service{Name: testKubernetesServiceName, Namespace: route.Namespace, Spec: corev1.ServiceSpec{ClusterIP: "10.43.0.1", Ports: []corev1.ServicePort{{Port: 443}}}}
+	kube := fake.NewClientBuilder().WithScheme(bindingTestScheme(t)).WithStatusSubresource(route).WithObjects(
+		provider, route, service,
+		&corev1.Namespace{Name: route.Namespace, Labels: map[string]string{testTenantName: testAllowedLabelValue}},
+		&corev1.Namespace{Name: metav1.NamespaceSystem, UID: clusterUID},
+		&corev1.Secret{Name: testAPITokenSecretName, Namespace: defaultSystemNamespace, Data: map[string][]byte{testAPITokenSecretKey: []byte("api-token")}},
+	).Build()
+	tunnel := &cfclient.Tunnel{ID: "previous-tunnel", Name: privateTunnelName(clusterUID, route.UID), ConfigSource: cfclient.ConfigSourceCloudflare}
+	cloudflare := &fakeCloudflareClient{tunnel: tunnel, token: testConnectorToken}
+	r := &CloudflareTunnelPrivateRouteReconciler{Client: kube, Cloudflare: fakeCloudflareFactory{client: cloudflare}, ControllerClass: testControllerClass}
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(route)}
+	if _, err := r.Reconcile(t.Context(), request); err != nil {
+		t.Fatalf("reconcile initial tunnel: %v", err)
+	}
+	if err := r.Get(t.Context(), request.NamespacedName, route); err != nil {
+		t.Fatal(err)
+	}
+	if route.Status.TunnelID != tunnel.ID || route.Status.RouteID == "" || len(cloudflare.privateRoutes) != 1 {
+		t.Fatalf("initial reconcile did not program the private route: %#v", route.Status)
+	}
+	return r, cloudflare, route
 }
 
 func TestPrivateRouteRetainRemovesConnectorButPreservesCloudflareState(t *testing.T) {
@@ -286,7 +428,18 @@ func TestPrivateRouteSingleConnector(t *testing.T) {
 	if actual.Status.Resources.Deployment != name || actual.Status.Resources.Secret != name {
 		t.Fatalf("connector resource status = %#v", actual.Status.Resources)
 	}
-	if _, err := r.ensureConnector(ctx, actual, testConnectorToken); err != nil {
+	unchanged, err := r.ensureConnector(ctx, actual, testConnectorToken)
+	if err != nil {
 		t.Fatalf("repeat reconcile: %v", err)
+	}
+	if unchanged.ResourceVersion != deployment.ResourceVersion {
+		t.Fatal("same token caused a Deployment update")
+	}
+	rotated, err := r.ensureConnector(ctx, actual, "rotated-connector-token")
+	if err != nil {
+		t.Fatalf("reconcile rotated token: %v", err)
+	}
+	if equality.Semantic.DeepEqual(rotated.Spec.Template, unchanged.Spec.Template) {
+		t.Fatal("rotating the token alone did not update the pod template")
 	}
 }

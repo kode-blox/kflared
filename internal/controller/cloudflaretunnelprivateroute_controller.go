@@ -61,6 +61,7 @@ type CloudflareTunnelPrivateRouteReconciler struct {
 
 const privateFinalizer = "kflared.kodeblox.com/private-route-cleanup"
 const privateUIDLabel = "kflared.kodeblox.com/private-route-uid"
+const privateConnectorTokenChecksumAnnotation = "kflared.kodeblox.com/connector-token-checksum"
 
 func (r *CloudflareTunnelPrivateRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	result, err := r.reconcile(ctx, req)
@@ -470,6 +471,7 @@ func (r *CloudflareTunnelPrivateRouteReconciler) ensureConnector(ctx context.Con
 	}); err != nil {
 		return nil, err
 	}
+	tokenChecksum := sha256.Sum256([]byte(token))
 	deployment := &appsv1.Deployment{Name: name, Namespace: namespace}
 	if _, err := controllerutil.CreateOrPatch(ctx, r.Client, deployment, func() error {
 		if err := verifyPrivateChild(route, deployment); err != nil {
@@ -481,6 +483,7 @@ func (r *CloudflareTunnelPrivateRouteReconciler) ensureConnector(ctx context.Con
 		deployment.Spec.Selector = &metav1.LabelSelector{MatchLabels: childLabels}
 		deployment.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RollingUpdateDeploymentStrategyType}
 		deployment.Spec.Template.Labels = childLabels
+		metav1.SetMetaDataAnnotation(&deployment.Spec.Template.ObjectMeta, privateConnectorTokenChecksumAnnotation, hex.EncodeToString(tokenChecksum[:]))
 		deployment.Spec.Template.Spec = connectorPodSpec(name, r.cloudflaredImage())
 		return nil
 	}); err != nil {
