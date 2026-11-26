@@ -2,6 +2,17 @@ name: Deliver Documentation
 
 on:
   workflow_call:
+    secrets:
+      GITOPS_APP_PRIVATE_KEY:
+        description: GitHub App private key used to update the GitOps repository
+        required: true
+    outputs:
+      image-tag:
+        description: Published documentation image tag
+        value: ${{ jobs.prepare-documentation.outputs.image-tag }}
+      image-digest:
+        description: Published documentation image digest
+        value: ${{ jobs.prepare-documentation.outputs.image-digest }}
 
 permissions: {}
 
@@ -33,42 +44,27 @@ jobs:
         with:
           path: docs/out
 
-      - name: Upload generated site
-        if: >-
-          github.event_name == 'push' ||
-          (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
-        uses: actions/upload-artifact@v7
-        with:
-          name: site-kflared-docs
-          path: docs/out
-          if-no-files-found: error
-          include-hidden-files: true
-          retention-days: 7
-
-  deploy-pages:
-    name: Deploy documentation
-    if: >-
-      github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+  prepare-documentation:
+    name: Prepare Documentation
     needs:
       - build-documentation
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
     permissions:
-      actions: read
       contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs['page-url'] }}
+      packages: write
+    uses: $/.github/workflows/prepare-documentation.yaml
 
-    steps:
-      - id: deployment
-        name: Deploy site
-        uses: SayakMukhopadhyay/github-actions/deploy-pages-artifact@v1
-        with:
-          github-token: ${{ github.token }}
-          source-repository: ${{ github.repository }}
-          source-run-id: ${{ github.run_id }}
-          artifact-name: site-kflared-docs
+  deploy-documentation:
+    name: Deploy Documentation
+    if: needs.prepare-documentation.outputs.image-tag != ''
+    needs:
+      - prepare-documentation
+    permissions:
+      packages: read
+    uses: $/.github/workflows/deploy.yaml
+    with:
+      deployment-environment: documentation
+      chart-name: kflared
+      dependency: staticSites
+      image-tag: ${{ needs.prepare-documentation.outputs.image-tag }}
+    secrets:
+      GITOPS_APP_PRIVATE_KEY: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}

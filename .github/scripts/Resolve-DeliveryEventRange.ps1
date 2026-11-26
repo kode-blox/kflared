@@ -7,6 +7,12 @@ if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction Sile
   $PSNativeCommandUseErrorActionPreference = $false
 }
 
+<#
+.SYNOPSIS
+Runs a Git query and returns its exit code and trimmed output without terminating the script.
+.PARAMETER Arguments
+Git arguments passed as separate tokens; callers decide which query failures are fatal.
+#>
 function Invoke-Git {
   param(
     [Parameter(Mandatory)]
@@ -22,6 +28,12 @@ function Invoke-Git {
   }
 }
 
+<#
+.SYNOPSIS
+Emits a GitHub Actions error annotation and terminates event-range resolution.
+.PARAMETER Message
+The missing or invalid event evidence that prevents selecting a reliable commit range.
+#>
 function Stop-WithGitHubError {
   param(
     [Parameter(Mandatory)]

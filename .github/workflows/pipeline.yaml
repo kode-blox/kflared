@@ -38,11 +38,11 @@ jobs:
     needs:
       - detect-delivery-changes
     permissions:
-      actions: read
       contents: read
-      pages: write
-      id-token: write
+      packages: write
     uses: $/.github/workflows/deliver-documentation.yaml
+    secrets:
+      GITOPS_APP_PRIVATE_KEY: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
 
   validate-image:
     name: Validate Image

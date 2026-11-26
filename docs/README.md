@@ -55,7 +55,11 @@ npm run build --workspace @kode-blox/kflared-docs
 
 `types:check` generates the Next.js route types before running the TypeScript 7 compiler. ESLint loads the TypeScript 6 compatibility API through the `typescript` package alias.
 
-The production site is designed to be served from the root of `https://kflared.kodeblox.com/`.
+The public documentation URL is `https://kflared.kodeblox.com/`.
+
+For cluster delivery, the [documentation workflow](../.github/workflows/deliver-documentation.yaml) uses the `documentation` GitHub environment with `GITOPS_ENVIRONMENT` set to `hetzner-fsn1-dc4-prod/docs`. The chart key `kflared` selects `kflared/envs/hetzner-fsn1-dc4-prod/docs/values.yaml` in Landscape, where the workflow updates `staticSites.image.tag`.
+
+The workflow publishes `ghcr.io/kode-blox/kflared/docs:build-<full-source-sha>` with the repository's `GITHUB_TOKEN`. Anonymous cluster pulls require the package to be public.
 
 The production export includes these machine-readable entry points:
 

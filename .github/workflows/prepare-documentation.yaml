@@ -1,0 +1,59 @@
+name: Prepare Documentation
+
+on:
+  workflow_call:
+    outputs:
+      image-tag:
+        description: Published documentation image tag
+        value: ${{ jobs.publish-image.outputs.image-tag }}
+      image-digest:
+        description: Published documentation image digest
+        value: ${{ jobs.publish-image.outputs.image-digest }}
+
+permissions: {}
+
+jobs:
+  publish-image:
+    name: Publish documentation image
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: documentation
+      url: ${{ vars.URL }}
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-tag: ${{ steps.image.outputs.image-reference != '' && format('build-{0}', github.sha) || '' }}
+      image-digest: ${{ steps.image.outputs.image-digest }}
+
+    steps:
+      - name: Checkout workspace manifests
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prepare documentation build context
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/kflared-docs-workspace"
+          cp package.json package-lock.json "$RUNNER_TEMP/kflared-docs-workspace/"
+
+      - id: image
+        name: Build and publish documentation image
+        uses: SayakMukhopadhyay/github-actions/image-build-push@v1
+        with:
+          tag: build-${{ github.sha }}
+          version: build-${{ github.sha }}
+          registry: ghcr.io
+          image-repository: ${{ github.repository }}
+          component: docs
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+          working-directory: docs
+          build-contexts: |
+            workspace=${{ runner.temp }}/kflared-docs-workspace
+          push: "true"

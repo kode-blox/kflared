@@ -80,7 +80,7 @@ jobs:
         with:
           base-ref: ${{ steps.event-range.outputs.base-ref }}
           head-ref: ${{ steps.event-range.outputs.head-ref }}
-          pattern: '^(?:\.github/workflows/deliver-documentation\.yaml|\.nvmrc|docs/.+|package-lock\.json|package\.json)$'
+          pattern: '^(?:\.github/workflows/(?:deliver|prepare)-documentation\.yaml|\.nvmrc|docs/.+|package-lock\.json|package\.json)$'
 
       - id: application-release
         name: Detect application release request

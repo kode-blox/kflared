@@ -45,6 +45,6 @@ These dispatches publish artifacts and may update external GitOps state. Select 
 
 ## Documentation delivery
 
-Changes under `docs/`, the root npm manifests/lockfile, `.nvmrc`, or the documentation workflow select the separate [documentation delivery workflow](https://github.com/kode-blox/kflared/blob/main/.github/workflows/deliver-documentation.yaml). It runs documentation lint, type checks, a production export, and static-site validation independently of application CI. Pull requests validate the export; pushes and manual pipeline dispatches on `main` upload it and deploy GitHub Pages at `https://kflared.kodeblox.com`.
+Changes under `docs/`, the root npm manifests and lockfile, `.nvmrc`, or the documentation delivery and preparation workflows select the separate [documentation delivery workflow](https://github.com/kode-blox/kflared/blob/main/.github/workflows/deliver-documentation.yaml). It runs documentation lint, type checks, a production export, and static-site validation independently of application CI. Pull requests validate the export. Pushes to `main` and manual pipeline dispatches from `main` publish `ghcr.io/kode-blox/kflared/docs:build-<full-source-sha>` and update the docs image tag in Landscape. Argo CD reconciles the wrapper for `https://kflared.kodeblox.com`.
 
 Run the same lint, type, and build commands from the repository root before submitting authored changes; they are listed in [Testing](/testing#documentation-checks). Review sidebar order, internal links, search, and generated Markdown along with the visible page content.

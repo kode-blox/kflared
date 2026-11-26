@@ -21,6 +21,11 @@ on:
         required: false
         type: string
         default: ""
+      dependency:
+        description: Dependency name or alias (defaults to the chart name)
+        required: false
+        type: string
+        default: ""
     secrets:
       GITOPS_APP_PRIVATE_KEY:
         description: GitHub App private key used to update the GitOps repository
@@ -35,6 +40,7 @@ jobs:
     timeout-minutes: 15
     environment:
       name: ${{ inputs.deployment-environment }}
+      url: ${{ vars.URL }}
     permissions:
       packages: read
 
@@ -57,7 +63,7 @@ jobs:
           chart-name: ${{ inputs.chart-name }}
           chart-version: ${{ inputs.chart-version }}
           image-tag: ${{ inputs.image-tag }}
-          dependency: ${{ inputs.chart-name }}
+          dependency: ${{ inputs.dependency }}
           registry: ${{ inputs.chart-version != '' && 'ghcr.io' || '' }}
           username: ${{ inputs.chart-version != '' && github.actor || '' }}
           password: ${{ inputs.chart-version != '' && github.token || '' }}
